@@ -1,0 +1,137 @@
+﻿<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<script>
+'use strict';
+
+// Sandboxed page — CSP relaxada, permite new Function / eval.
+// Fetch eh proxiado via postMessage para o popup.js (que tem host_permissions).
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+// Mapa de requisicoes fetch pendentes: reqId -> { resolve, reject }
+const pendingFetches = new Map();
+
+// Ouve respostas do popup.js (fetch proxy) e mensagens 'run'
+window.addEventListener('message', async (event) => {
+  const msg = event.data || {};
+
+  // ── Resposta de fetch proxiado ──────────────────────────────
+  if (msg.type === 'notion-fetch-response') {
+    const p = pendingFetches.get(msg.reqId);
+    if (p) { pendingFetches.delete(msg.reqId); p.resolve(msg.data); }
+    return;
+  }
+  if (msg.type === 'notion-fetch-error') {
+    const p = pendingFetches.get(msg.reqId);
+    if (p) { pendingFetches.delete(msg.reqId); p.reject(new Error(msg.message)); }
+    return;
+  }
+
+  // ── Executar regra ──────────────────────────────────────────
+  if (msg.type !== 'run') return;
+
+  const { code, databases, config, runId } = msg;
+
+  function reply(obj) {
+    event.source.postMessage(Object.assign({}, obj, { runId: runId }), '*');
+  }
+
+  function log(msg, level) {
+    reply({ type: 'log', msg: String(msg), level: level || 'info' });
+  }
+
+  function sleep(ms) {
+    return new Promise(function(r) { setTimeout(r, ms); });
+  }
+
+  // Envia fetch para o popup.js executar (tem host_permissions)
+  function notionFetch(path, method, body) {
+    method = method || 'GET';
+    return new Promise(function(resolve, reject) {
+      var reqId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      pendingFetches.set(reqId, { resolve: resolve, reject: reject });
+      window.parent.postMessage(
+        { type: 'notion-fetch', path: path, method: method, body: body, reqId: reqId },
+        '*'
+      );
+    });
+  }
+
+  async function queryAllPages(dbId, filter) {
+    const pages = [];
+    let cursor = null;
+    do {
+      const body = { page_size: 100 };
+      if (cursor) body.start_cursor = cursor;
+      if (filter) body.filter = filter;
+      const result = await notionFetch('/databases/' + dbId + '/query', 'POST', body);
+      pages.push.apply(pages, result.results || []);
+      cursor = result.has_more ? result.next_cursor : null;
+    } while (cursor);
+    return pages;
+  }
+
+  async function createPage(parentDbId, properties, children) {
+    return notionFetch('/pages', 'POST', {
+      parent: { database_id: parentDbId },
+      properties: properties,
+      children: children || [],
+    });
+  }
+
+  async function updatePage(pageId, properties) {
+    return notionFetch('/pages/' + pageId, 'PATCH', { properties: properties });
+  }
+
+  async function fetchDatabaseSchema(dbId) {
+    return notionFetch('/databases/' + dbId);
+  }
+
+  function getPageTitle(page) {
+    const props = (page && page.properties) || {};
+    for (const prop of Object.values(props)) {
+      if (prop.type === 'title') {
+        return (prop.title || []).map(function(t) { return t.plain_text; }).join('').trim() || '(Sem titulo)';
+      }
+    }
+    return page ? page.id : '';
+  }
+
+  function getTitlePropertyName(schema) {
+    const props = (schema && schema.properties) || {};
+    for (const entry of Object.entries(props)) {
+      if (entry[1].type === 'title') return entry[0];
+    }
+    return 'Name';
+  }
+
+  const notion = {
+    queryAllPages:       queryAllPages,
+    createPage:          createPage,
+    updatePage:          updatePage,
+    fetchDatabaseSchema: fetchDatabaseSchema,
+    getPageTitle:        getPageTitle,
+    getTitlePropertyName: getTitlePropertyName,
+    sleep:               sleep,
+    fetch:               notionFetch,
+  };
+
+  try {
+    const fn = new AsyncFunction('notion', 'databases', 'config', 'log', 'sleep', code);
+    await fn(notion, databases, config, log, sleep);
+    reply({ type: 'done' });
+  } catch (e) {
+    reply({ type: 'error', message: e.message });
+  }
+});
+
+window.addEventListener('load', function() {
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: 'sandbox-ready' }, '*');
+  }
+});
+</script>
+</body>
+</html>

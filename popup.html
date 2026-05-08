@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Notion Automator</title>
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Dark Theme Variables ── */
+    :root {
+      --bg:        #191919;
+      --surface:   #242424;
+      --surface2:  #2d2d2d;
+      --border:    #383838;
+      --text:      #e2e2de;
+      --text2:     #9b9b97;
+      --text3:     #555553;
+      --accent:    #2383e2;
+      --accenth:   #1b72cf;
+      --success:   #4dac81;
+      --error:     #d44c47;
+      --warn:      #c79243;
+      --code-bg:   #141414;
+    }
+
+    body {
+      width: 480px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 13px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-title {
+      flex: 1;
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ── Content ── */
+    .content { padding: 15px 13px; }
+
+    /* ── Screens ── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ── Steps indicator ── */
+    .steps { display: flex; gap: 3px; margin-bottom: 17px; }
+    .step {
+      flex: 1;
+      padding: 5px 0;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text3);
+      border-bottom: 2px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .step.active { color: var(--accent);  border-bottom-color: var(--accent);  }
+    .step.done   { color: var(--success); border-bottom-color: var(--success); }
+
+    /* ── Typography ── */
+    h2 { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+    .desc { color: var(--text2); font-size: 12px; margin-bottom: 15px; line-height: 1.4; }
+    .section-label {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text3); margin-bottom: 9px;
+    }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block; font-weight: 600; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text2); margin-bottom: 4px;
+    }
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%; padding: 7px 10px;
+      border: 1.5px solid var(--border); border-radius: 6px;
+      font-size: 13px; color: var(--text); background: var(--surface2);
+      outline: none; transition: border-color 0.15s; font-family: inherit;
+      resize: vertical;
+    }
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus { border-color: var(--accent); }
+    .field select option { background: var(--surface2); }
+
+    /* ── Code editor textarea ── */
+    .code-editor {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace !important;
+      font-size: 12px !important;
+      line-height: 1.65 !important;
+      background: var(--code-bg) !important;
+      min-height: 260px;
+      tab-size: 2;
+      color: #c9d1d9 !important;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 7px 13px; border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: background 0.12s, opacity 0.12s; font-family: inherit; white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary   { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled)   { background: var(--accenth); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn-ghost     { background: transparent; color: var(--text2); }
+    .btn-ghost:hover:not(:disabled)     { background: var(--surface2); color: var(--text); }
+    .btn-danger    { background: transparent; color: var(--error); border: 1px solid transparent; }
+    .btn-danger:hover:not(:disabled)    { background: rgba(212,76,71,.12); border-color: var(--error); }
+    .btn-full { width: 100%; }
+    .btn-sm   { padding: 5px 10px; font-size: 11px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row-between { justify-content: space-between; }
+    .flex1 { flex: 1; }
+
+    /* ── Status ── */
+    .status {
+      padding: 7px 11px; border-radius: 6px; font-size: 12px;
+      margin-top: 8px; line-height: 1.4; display: none;
+    }
+    .status-error   { background: rgba(212,76,71,.15);  color: var(--error);   display: block; }
+    .status-success { background: rgba(77,172,129,.15); color: var(--success); display: block; }
+    .status-info    { background: rgba(35,131,226,.15); color: var(--accent);  display: block; }
+    .status-warn    { background: rgba(199,146,67,.15); color: var(--warn);    display: block; }
+
+    /* ── Loading ── */
+    .center {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 14px; padding: 52px 20px;
+      color: var(--text2); font-size: 13px;
+    }
+    .spinner {
+      width: 24px; height: 24px;
+      border: 2.5px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ── */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 13px 0; }
+
+    /* ── API Reference panel ── */
+    .api-ref {
+      border: 1px solid var(--border); border-radius: 6px;
+      margin-bottom: 10px; background: var(--surface);
+    }
+    .api-ref summary {
+      padding: 7px 10px; cursor: pointer; font-size: 11px;
+      font-weight: 600; color: var(--text2); user-select: none; list-style: none;
+    }
+    .api-ref summary::-webkit-details-marker { display: none; }
+    .api-ref summary::before { content: '▶  '; font-size: 9px; opacity: .7; }
+    .api-ref[open] summary::before { content: '▼  '; }
+    .api-ref-body {
+      padding: 8px 12px 11px;
+      border-top: 1px solid var(--border);
+      font-size: 11px; line-height: 1.85;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      white-space: pre-wrap; overflow-x: auto;
+    }
+    .ref-sec  { color: var(--text3); margin-top: 4px; }
+    .ref-key  { color: var(--text); }
+    .ref-val  { color: var(--success); }
+    .ref-fn   { color: #b392f0; }
+    .ref-cmt  { color: var(--text3); }
+
+    /* ── Rules list ── */
+    .rules-container { display: flex; flex-direction: column; gap: 7px; margin-bottom: 13px; max-height: 340px; overflow-y: auto; }
+
+    /* ── Rule card ── */
+    .rule-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden;
+      transition: border-color .15s;
+    }
+    .rule-card.running { border-color: var(--accent); }
+    .rule-card-header {
+      display: flex; align-items: flex-start; padding: 10px 11px; gap: 9px;
+    }
+    .rule-card-info { flex: 1; min-width: 0; }
+    .rule-card-name {
+      font-weight: 600; font-size: 12px; margin-bottom: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rule-card-desc {
+      font-size: 11px; color: var(--text2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rule-card-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .rule-card-actions button {
+      background: none; border: none; color: var(--text2);
+      cursor: pointer; padding: 4px 6px; border-radius: 4px;
+      font-size: 12px; transition: background .1s, color .1s; line-height: 1;
+    }
+    .rule-card-actions button:hover { background: var(--surface2); color: var(--text); }
+    .rule-card-actions button[data-action="delete"]:hover { color: var(--error); }
+    .rule-card-actions button:disabled { opacity: .35; cursor: not-allowed; }
+
+    /* ── Rule execution log ── */
+    .rule-log {
+      border-top: 1px solid var(--border); display: none;
+      max-height: 190px; overflow-y: auto; background: var(--code-bg);
+    }
+    .log-line {
+      padding: 2px 10px; font-size: 11px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      white-space: pre-wrap; word-break: break-word; line-height: 1.65;
+    }
+    .log-info    { color: var(--text2); }
+    .log-success { color: var(--success); }
+    .log-error   { color: var(--error); }
+    .log-warn    { color: var(--warn); }
+
+    /* ── Empty state ── */
+    .empty-state { text-align: center; padding: 32px 20px; color: var(--text3); }
+    .empty-state .empty-icon { font-size: 26px; margin-bottom: 8px; }
+    .empty-state p { font-size: 12px; line-height: 1.5; }
+
+    /* ── Help text ── */
+    .help { font-size: 11px; color: var(--text2); margin-top: 5px; }
+    .help a { color: var(--accent); text-decoration: none; cursor: pointer; }
+    .help a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <!-- Iframe sandboxado — isolado do resto da extensão -->
+  <iframe id="sandbox-frame" src="sandbox.html" style="display:none" title="sandbox"></iframe>
+
+  <!-- ══ HEADER (fixo em todas as telas) ══ -->
+  <div class="header">
+    <button class="btn btn-ghost btn-sm" id="btn-header-back" style="display:none; padding:4px 8px">← Voltar</button>
+    <div class="header-title" id="header-title">⚡ Notion Automator</div>
+  </div>
+
+  <!-- ══ LOADING ══ -->
+  <div id="screen-loading" class="screen active">
+    <div class="center">
+      <div class="spinner"></div>
+      <span id="loading-msg">Carregando…</span>
+    </div>
+  </div>
+
+  <!-- ══ STEP 1 — API KEY ══ -->
+  <div id="screen-api" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step active">1 · API Key</div>
+        <div class="step">2 · Databases</div>
+        <div class="step">3 · Propriedades</div>
+      </div>
+      <h2>Configurar API Key</h2>
+      <p class="desc">Token de integração interna do Notion para acessar seus databases.</p>
+      <div class="field">
+        <label>Token de Integração</label>
+        <input type="password" id="input-api-key" placeholder="secret_…" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="help">Crie em <a id="link-integrations">notion.so/my-integrations</a> e adicione a integração a cada database.</p>
+      <div id="status-api" class="status"></div>
+      <br>
+      <button class="btn btn-primary btn-full" id="btn-save-api">Validar e Continuar →</button>
+    </div>
+  </div>
+
+  <!-- ══ STEP 2 — DATABASES ══ -->
+  <div id="screen-databases" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step done">1 · API Key</div>
+        <div class="step active">2 · Databases</div>
+        <div class="step">3 · Propriedades</div>
+      </div>
+      <h2>Selecionar Databases</h2>
+      <p class="desc">Selecione qual database do Notion corresponde a cada entidade.</p>
+      <div class="field">
+        <label>Database de Temas</label>
+        <select id="sel-themes-db"></select>
+      </div>
+      <div class="field">
+        <label>Database de Formatos</label>
+        <select id="sel-formats-db"></select>
+      </div>
+      <div class="field">
+        <label>Database de Conteúdos</label>
+        <select id="sel-content-db"></select>
+      </div>
+      <div id="status-databases" class="status"></div>
+      <br>
+      <button class="btn btn-primary btn-full" id="btn-save-databases">Continuar →</button>
+    </div>
+  </div>
+
+  <!-- ══ STEP 3 — PROPRIEDADES ══ -->
+  <div id="screen-properties" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step done">1 · API Key</div>
+        <div class="step done">2 · Databases</div>
+        <div class="step active">3 · Propriedades</div>
+      </div>
+      <h2>Mapear Propriedades</h2>
+      <p class="desc">Selecione as propriedades de relação que conectam os databases entre si.</p>
+
+      <div class="section-label" style="margin-bottom:6px">No database de Temas</div>
+      <div class="field">
+        <label>Relação → Formatos</label>
+        <select id="sel-theme-formats-prop"></select>
+      </div>
+
+      <div class="section-label" style="margin-top:12px;margin-bottom:6px">No database de Conteúdos</div>
+      <div class="field">
+        <label>Relação → Temas</label>
+        <select id="sel-content-theme-prop"></select>
+      </div>
+      <div class="field">
+        <label>Relação → Formatos</label>
+        <select id="sel-content-format-prop"></select>
+      </div>
+      <div id="status-properties" class="status"></div>
+      <br>
+      <button class="btn btn-primary btn-full" id="btn-save-properties">Salvar Configuração ✓</button>
+    </div>
+  </div>
+
+  <!-- ══ MAIN — LISTA DE REGRAS ══ -->
+  <div id="screen-main" class="screen">
+    <div class="content">
+      <div class="row row-between" style="margin-bottom:11px">
+        <div class="section-label" style="margin-bottom:0">Automações</div>
+        <button class="btn btn-primary btn-sm" id="btn-add-rule">+ Nova Regra</button>
+      </div>
+      <div id="rules-container" class="rules-container"></div>
+      <hr class="divider">
+      <div class="row">
+        <button class="btn btn-secondary btn-sm flex1" id="btn-reset">⚙ Reconfigurar</button>
+        <button class="btn btn-danger btn-sm flex1" id="btn-reset-all">🔑 Trocar API Key</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ EDITOR DE REGRA ══ -->
+  <div id="screen-rule-editor" class="screen">
+    <div class="content">
+      <div class="field">
+        <label>Nome da Automação</label>
+        <input type="text" id="editor-name" placeholder="Ex: Gerar Conteúdos por Tema" maxlength="80">
+      </div>
+      <div class="field">
+        <label>Descrição</label>
+        <textarea id="editor-desc" placeholder="Descreva o que essa automação faz…" rows="2" maxlength="300"></textarea>
+      </div>
+
+      <details class="api-ref" id="api-ref">
+        <summary>📖 Referência da API disponível no código</summary>
+        <div class="api-ref-body" id="api-ref-body"></div>
+      </details>
+
+      <div class="field">
+        <label>Código JavaScript  <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(contexto async, Tab = 2 espaços)</span></label>
+        <textarea id="editor-code" class="code-editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+
+      <div id="status-editor" class="status"></div>
+      <div class="row" style="margin-top:11px">
+        <button class="btn btn-secondary flex1" id="btn-editor-cancel">Cancelar</button>
+        <button class="btn btn-primary flex1" id="btn-editor-save">Salvar Regra</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 400px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #fff;
+      color: #37352f;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid #e8e8e6;
+      background: #f7f6f3;
+    }
+    .header-title {
+      font-weight: 600;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ── Content wrapper ── */
+    .content { padding: 18px 16px; }
+
+    /* ── Screens ── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ── Steps indicator ── */
+    .steps {
+      display: flex;
+      margin-bottom: 18px;
+    }
+    .step {
+      flex: 1;
+      padding: 4px 0;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: #b9b7b3;
+      border-bottom: 2px solid #e8e8e6;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .step.active { color: #2383e2; border-bottom-color: #2383e2; }
+    .step.done   { color: #0f7b6c; border-bottom-color: #0f7b6c; }
+
+    /* ── Typography ── */
+    h2 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .desc { color: #73726e; font-size: 12px; margin-bottom: 16px; }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #73726e;
+      margin-bottom: 10px;
+    }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 12px; }
+    .field label {
+      display: block;
+      font-weight: 500;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #73726e;
+      margin-bottom: 4px;
+    }
+    .field input,
+    .field select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1.5px solid #e8e8e6;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #37352f;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus,
+    .field select:focus { border-color: #2383e2; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #2383e2; color: #fff; width: 100%; }
+    .btn-primary:hover:not(:disabled) { background: #1a73d6; }
+    .btn-secondary { background: #f0eeeb; color: #37352f; }
+    .btn-secondary:hover:not(:disabled) { background: #e8e6e1; }
+    .btn-danger { background: #fdecec; color: #e03e3e; }
+    .btn-danger:hover:not(:disabled) { background: #fad9d9; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .row { display: flex; gap: 8px; }
+    .flex1 { flex: 1; }
+
+    /* ── Status messages ── */
+    .status {
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    .status-error   { background: #fdecec; color: #e03e3e; }
+    .status-success { background: #e9f8f2; color: #0f7b6c; }
+    .status-info    { background: #ebf3fc; color: #2383e2; }
+    .status-warn    { background: #fff8e6; color: #c97c00; }
+
+    /* ── Loading spinner ── */
+    .center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 48px 20px;
+      color: #73726e;
+      font-size: 13px;
+    }
+    .spinner {
+      width: 26px;
+      height: 26px;
+      border: 3px solid #e8e8e6;
+      border-top-color: #2383e2;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Help text ── */
+    .help { font-size: 12px; color: #73726e; margin-top: 6px; }
+    .help a { color: #2383e2; text-decoration: none; }
+    .help a:hover { text-decoration: underline; }
+
+    /* ── Divider ── */
+    .divider { border: none; border-top: 1px solid #e8e8e6; margin: 16px 0; }
+
+    /* ── Automation card ── */
+    .automation-card {
+      border: 1.5px solid #e8e8e6;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .automation-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .automation-card .card-desc { font-size: 12px; color: #73726e; margin-bottom: 12px; }
+
+    /* ── Automation log ── */
+    .log-container {
+      margin-top: 10px;
+      border: 1px solid #e8e8e6;
+      border-radius: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      background: #f7f6f3;
+    }
+    .log-line {
+      padding: 3px 10px;
+      font-size: 11px;
+      font-family: 'Courier New', Courier, monospace;
+      border-bottom: 1px solid #f0eeeb;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .log-line:last-child { border-bottom: none; }
+    .log-error   { color: #e03e3e; }
+    .log-success { color: #0f7b6c; font-weight: 600; }
+    .log-warn    { color: #c97c00; }
+    .log-info    { color: #37352f; }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════ HEADER ══ -->
+  <div class="header">
+    <div class="header-title">⚡ Notion Automator</div>
+  </div>
+
+  <!-- ═══════════════════════════════════ LOADING ══ -->
+  <div id="screen-loading" class="screen active">
+    <div class="center">
+      <div class="spinner"></div>
+      <span id="loading-msg">Carregando…</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ STEP 1 — API KEY ══ -->
+  <div id="screen-api" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step active">1. API Key</div>
+        <div class="step">2. Databases</div>
+        <div class="step">3. Propriedades</div>
+      </div>
+
+      <h2>Configurar API Key</h2>
+      <p class="desc">Insira o token de integração interna do Notion para conectar a extensão aos seus databases.</p>
+
+      <div class="field">
+        <label>Token de Integração</label>
+        <input type="password" id="input-api-key" placeholder="secret_…" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="help">
+        Crie uma integração em
+        <a href="#" id="link-notion-integrations">notion.so/my-integrations</a>
+        e copie o "Internal Integration Secret". Depois adicione a integração a cada database no Notion.
+      </p>
+
+      <div id="status-api" class="status" style="display:none"></div>
+      <br>
+      <button class="btn btn-primary" id="btn-save-api">Salvar e Continuar →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ STEP 2 — DATABASES ══ -->
+  <div id="screen-databases" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step done">1. API Key</div>
+        <div class="step active">2. Databases</div>
+        <div class="step">3. Propriedades</div>
+      </div>
+
+      <h2>Selecionar Databases</h2>
+      <p class="desc">Indique qual database do Notion corresponde a cada entidade. A integração deve ter acesso a todos eles.</p>
+
+      <div class="field">
+        <label>Database de Temas</label>
+        <select id="sel-themes-db"></select>
+      </div>
+      <div class="field">
+        <label>Database de Formatos</label>
+        <select id="sel-formats-db"></select>
+      </div>
+      <div class="field">
+        <label>Database de Conteúdos</label>
+        <select id="sel-content-db"></select>
+      </div>
+
+      <div id="status-databases" class="status" style="display:none"></div>
+      <br>
+      <button class="btn btn-primary" id="btn-save-databases">Continuar →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ STEP 3 — PROPRIEDADES ══ -->
+  <div id="screen-properties" class="screen">
+    <div class="content">
+      <div class="steps">
+        <div class="step done">1. API Key</div>
+        <div class="step done">2. Databases</div>
+        <div class="step active">3. Propriedades</div>
+      </div>
+
+      <h2>Mapear Propriedades</h2>
+      <p class="desc">Selecione as propriedades de relação que conectam os databases entre si.</p>
+
+      <div class="section-label">No database de Temas</div>
+      <div class="field">
+        <label>Relação com Formatos</label>
+        <select id="sel-theme-formats-prop"></select>
+      </div>
+
+      <div class="section-label" style="margin-top:14px">No database de Conteúdos</div>
+      <div class="field">
+        <label>Relação com Temas</label>
+        <select id="sel-content-theme-prop"></select>
+      </div>
+      <div class="field">
+        <label>Relação com Formatos</label>
+        <select id="sel-content-format-prop"></select>
+      </div>
+
+      <div id="status-properties" class="status" style="display:none"></div>
+      <br>
+      <button class="btn btn-primary" id="btn-save-properties">Salvar Configuração ✓</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════ MAIN — AUTOMAÇÕES ══ -->
+  <div id="screen-main" class="screen">
+    <div class="content">
+      <div class="section-label">Automações</div>
+
+      <div class="automation-card">
+        <h3>📋 Gerar Conteúdos por Tema</h3>
+        <p class="card-desc">
+          Detecta temas que ainda não possuem conteúdos relacionados e cria automaticamente
+          um conteúdo para cada formato associado ao tema, com texto padrão.
+        </p>
+        <button class="btn btn-primary" id="btn-run-automation">▶ Executar Automação</button>
+        <div id="automation-log" class="log-container" style="display:none"></div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="section-label">Configurações</div>
+      <div class="row">
+        <button class="btn btn-secondary btn-sm flex1" id="btn-reset">⚙️ Reconfigurar</button>
+        <button class="btn btn-danger btn-sm flex1" id="btn-reset-all">🔑 Trocar API Key</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

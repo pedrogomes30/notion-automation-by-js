@@ -1,0 +1,383 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Notion Automator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #191919;
+      --surface:  #242424;
+      --surface2: #2d2d2d;
+      --border:   #383838;
+      --text:     #e2e2de;
+      --text2:    #9b9b97;
+      --text3:    #555553;
+      --accent:   #2383e2;
+      --accenth:  #1b72cf;
+      --success:  #4dac81;
+      --error:    #d44c47;
+      --warn:     #c79243;
+      --code-bg:  #141414;
+    }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px; line-height: 1.5;
+      display: flex; flex-direction: column;
+    }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Header */
+    .header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 12px; border-bottom: 1px solid var(--border);
+      background: var(--surface); flex-shrink: 0;
+    }
+    .header-title { flex: 1; font-weight: 600; font-size: 13px; }
+
+    /* Screens wrapper */
+    .screens-wrapper {
+      flex: 1; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .screen { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .screen.active { display: flex; }
+
+    /* Scrollable area (for simple screens) */
+    .scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; }
+
+    .content { padding: 14px 12px; }
+
+    /* Typography */
+    h2 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .desc { color: var(--text2); font-size: 11px; margin-bottom: 14px; line-height: 1.4; }
+    .section-label {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text3); margin-bottom: 8px;
+    }
+
+    /* Form fields */
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block; font-weight: 600; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text2); margin-bottom: 4px;
+    }
+    .field input, .field select, .field textarea {
+      width: 100%; padding: 7px 10px;
+      border: 1.5px solid var(--border); border-radius: 6px;
+      font-size: 13px; color: var(--text); background: var(--surface2);
+      outline: none; transition: border-color 0.15s; font-family: inherit; resize: vertical;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+    .code-editor {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace !important;
+      font-size: 12px !important; line-height: 1.65 !important;
+      background: var(--code-bg) !important; min-height: 280px;
+      tab-size: 2; color: #c9d1d9 !important;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 7px 12px; border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: background 0.12s, opacity 0.12s; font-family: inherit; white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary  { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accenth); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+    .btn-danger { background: transparent; color: var(--error); border: 1px solid transparent; }
+    .btn-danger:hover:not(:disabled) { background: rgba(212,76,71,.12); border-color: var(--error); }
+    .btn-full { width: 100%; }
+    .btn-sm { padding: 5px 10px; font-size: 11px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row-between { justify-content: space-between; }
+    .flex1 { flex: 1; }
+
+    /* Status */
+    .status {
+      padding: 7px 11px; border-radius: 6px; font-size: 11px;
+      margin-top: 8px; line-height: 1.4;
+    }
+    .status:empty { display: none; }
+    .status-error   { background: rgba(212,76,71,.15);  color: var(--error);   }
+    .status-success { background: rgba(77,172,129,.15); color: var(--success); }
+    .status-info    { background: rgba(35,131,226,.15); color: var(--accent);  }
+    .status-warn    { background: rgba(199,146,67,.15); color: var(--warn);    }
+
+    /* Loading */
+    .center {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 14px; padding: 60px 20px;
+      color: var(--text2); font-size: 12px; flex: 1;
+    }
+    .spinner {
+      width: 22px; height: 22px;
+      border: 2.5px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    .spinner-sm {
+      width: 14px; height: 14px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;
+    }
+    .loading-inline {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--text2); font-size: 12px; padding: 16px 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Divider */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+    /* Help */
+    .help { font-size: 11px; color: var(--text2); margin-top: 5px; }
+    .help a { color: var(--accent); text-decoration: none; cursor: pointer; }
+    .help a:hover { text-decoration: underline; }
+
+    /* Tabs */
+    .tabs {
+      display: flex; border-bottom: 1px solid var(--border);
+      background: var(--surface); flex-shrink: 0;
+    }
+    .tab-btn {
+      flex: 1; padding: 10px 0; background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--text2); font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: color 0.15s, border-color 0.15s; font-family: inherit;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+
+    /* Tab panels */
+    .tab-panels { flex: 1; overflow: hidden; position: relative; min-height: 0; }
+    .tab-panel { display: none; height: 100%; overflow-y: auto; overflow-x: hidden; }
+    .tab-panel.active { display: block; }
+
+    /* Main footer */
+    .main-footer {
+      padding: 10px 12px; border-top: 1px solid var(--border);
+      display: flex; gap: 8px; flex-shrink: 0;
+    }
+
+    /* Database cards */
+    .db-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); margin-bottom: 8px; overflow: hidden;
+    }
+    .db-card-header {
+      display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+    }
+    .db-card-icon { font-size: 14px; flex-shrink: 0; }
+    .db-card-name { flex: 1; font-weight: 600; font-size: 12px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .db-card-count { font-size: 10px; color: var(--text3); flex-shrink: 0; }
+    .db-card-props { padding: 0 11px 9px; display: flex; flex-wrap: wrap; gap: 4px; }
+    .db-prop-tag {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 4px; padding: 2px 6px; font-size: 10px;
+    }
+    .db-prop-name { color: var(--text); }
+    .db-prop-type { color: var(--text3); }
+
+    /* API Reference */
+    .api-ref {
+      border: 1px solid var(--border); border-radius: 6px;
+      margin-bottom: 10px; background: var(--surface);
+    }
+    .api-ref summary {
+      padding: 7px 10px; cursor: pointer; font-size: 11px;
+      font-weight: 600; color: var(--text2); user-select: none; list-style: none;
+    }
+    .api-ref summary::-webkit-details-marker { display: none; }
+    .api-ref summary::before { content: '\25B6  '; font-size: 9px; opacity: .7; }
+    .api-ref[open] summary::before { content: '\25BC  '; }
+    .api-ref-body {
+      padding: 8px 12px 10px; border-top: 1px solid var(--border);
+      font-size: 10.5px; line-height: 1.85;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      white-space: pre-wrap; overflow-x: auto; max-height: 240px; overflow-y: auto;
+    }
+    .ref-sec { color: var(--text3); }
+    .ref-key { color: var(--text); }
+    .ref-fn  { color: #b392f0; }
+    .ref-cmt { color: var(--text3); }
+
+    /* Rule list */
+    .rules-container { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
+
+    /* Rule card */
+    .rule-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden; transition: border-color .15s;
+    }
+    .rule-card.running { border-color: var(--accent); }
+    .rule-card-header {
+      display: flex; align-items: flex-start; padding: 10px 11px; gap: 9px;
+    }
+    .rule-card-info { flex: 1; min-width: 0; }
+    .rule-card-name {
+      font-weight: 600; font-size: 12px; margin-bottom: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rule-card-desc {
+      font-size: 11px; color: var(--text2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rule-card-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .rule-card-actions button {
+      background: none; border: none; color: var(--text2);
+      cursor: pointer; padding: 4px 6px; border-radius: 4px;
+      font-size: 12px; transition: background .1s, color .1s; line-height: 1;
+    }
+    .rule-card-actions button:hover { background: var(--surface2); color: var(--text); }
+    .rule-card-actions button[data-action="delete"]:hover { color: var(--error); }
+    .rule-card-actions button:disabled { opacity: .35; cursor: not-allowed; }
+
+    /* Rule log */
+    .rule-log {
+      border-top: 1px solid var(--border); display: none;
+      max-height: 200px; overflow-y: auto; background: var(--code-bg);
+    }
+    .log-line {
+      padding: 2px 10px; font-size: 11px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      white-space: pre-wrap; word-break: break-word; line-height: 1.65;
+    }
+    .log-info    { color: var(--text2); }
+    .log-success { color: var(--success); }
+    .log-error   { color: var(--error); }
+    .log-warn    { color: var(--warn); }
+
+    /* Empty state */
+    .empty-state { text-align: center; padding: 36px 20px; color: var(--text3); }
+    .empty-state .empty-icon { font-size: 26px; margin-bottom: 8px; }
+    .empty-state p { font-size: 12px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+
+  <iframe id="sandbox-frame" src="sandbox.html" style="display:none" title="sandbox"></iframe>
+
+  <!-- HEADER -->
+  <div class="header">
+    <button class="btn btn-ghost btn-sm" id="btn-header-back" style="display:none;padding:4px 8px">&larr; Voltar</button>
+    <div class="header-title" id="header-title">&#9889; Notion Automator</div>
+  </div>
+
+  <!-- SCREENS WRAPPER -->
+  <div class="screens-wrapper">
+
+    <!-- LOADING -->
+    <div id="screen-loading" class="screen active">
+      <div class="center">
+        <div class="spinner"></div>
+        <span id="loading-msg">Carregando...</span>
+      </div>
+    </div>
+
+    <!-- API KEY -->
+    <div id="screen-api" class="screen">
+      <div class="scroll-area">
+        <div class="content">
+          <h2>Conectar ao Notion</h2>
+          <p class="desc">Insira o token de integracao interna. A extensao tera acesso apenas aos databases que voce compartilhou com a integracao.</p>
+          <div class="field">
+            <label>Token de Integracao</label>
+            <input type="password" id="input-api-key" placeholder="secret_..." autocomplete="off" spellcheck="false">
+          </div>
+          <p class="help">Crie em <a id="link-integrations">notion.so/my-integrations</a> e adicione a integracao a cada database.</p>
+          <div id="status-api" class="status"></div>
+          <br>
+          <button class="btn btn-primary btn-full" id="btn-save-api">Conectar &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN (tabs) -->
+    <div id="screen-main" class="screen">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="automations">Automacoes</button>
+        <button class="tab-btn" data-tab="databases">Databases</button>
+      </div>
+      <div class="tab-panels">
+
+        <!-- Tab: Automacoes -->
+        <div class="tab-panel active" data-tab="automations">
+          <div class="content">
+            <div class="row row-between" style="margin-bottom:11px">
+              <div class="section-label" style="margin-bottom:0">Automacoes</div>
+              <div class="row" style="gap:4px">
+                <button class="btn btn-ghost btn-sm" id="btn-import-rules">&#8593; Importar</button>
+                <button class="btn btn-ghost btn-sm" id="btn-export-rules">&#8595; Exportar</button>
+                <button class="btn btn-primary btn-sm" id="btn-add-rule">+ Nova Regra</button>
+              </div>
+            </div>
+            <div id="rules-container" class="rules-container"></div>
+          </div>
+        </div>
+
+        <!-- Tab: Databases -->
+        <div class="tab-panel" data-tab="databases">
+          <div class="content">
+            <div class="row row-between" style="margin-bottom:11px">
+              <div class="section-label" style="margin-bottom:0">Databases</div>
+              <button class="btn btn-ghost btn-sm" id="btn-refresh-dbs">&#8635; Atualizar</button>
+            </div>
+            <div id="databases-container"></div>
+          </div>
+        </div>
+
+      </div><!-- /.tab-panels -->
+      <div class="main-footer">
+        <button class="btn btn-secondary btn-sm flex1" id="btn-reset">&#128273; Trocar API Key</button>
+        <button class="btn btn-danger btn-sm flex1" id="btn-reset-all">&#128465; Apagar Tudo</button>
+      </div>
+    </div>
+
+    <!-- RULE EDITOR -->
+    <div id="screen-rule-editor" class="screen">
+      <div class="scroll-area">
+        <div class="content">
+          <div class="field">
+            <label>Nome da Automacao</label>
+            <input type="text" id="editor-name" placeholder="Ex: Gerar Conteudos por Tema" maxlength="80">
+          </div>
+          <div class="field">
+            <label>Descricao</label>
+            <textarea id="editor-desc" placeholder="Descreva o que essa automacao faz..." rows="2" maxlength="300"></textarea>
+          </div>
+
+          <details class="api-ref" id="api-ref">
+            <summary>&#128214; Referencia da API disponivel no codigo</summary>
+            <div class="api-ref-body" id="api-ref-body"></div>
+          </details>
+
+          <div class="field">
+            <label>Codigo JavaScript <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(async, Tab = 2 espacos)</span></label>
+            <textarea id="editor-code" class="code-editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+          </div>
+
+          <div id="status-editor" class="status"></div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn btn-secondary flex1" id="btn-editor-cancel">Cancelar</button>
+            <button class="btn btn-primary flex1" id="btn-editor-save">Salvar Regra</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.screens-wrapper -->
+
+  <script src="popup.js"></script>
+</body>
+</html>

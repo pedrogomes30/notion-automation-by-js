@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Notion Automator",
+  "version": "2.0",
+  "description": "Automações customizáveis para o Notion via JavaScript",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "https://www.notion.so/*",
+    "https://api.notion.com/*"
+  ],
+  "action": {
+    "default_title": "Notion Automator — clique para abrir/fechar"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "sandbox": {
+    "pages": ["sandbox.html"]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["panel.html", "popup.js", "sandbox.html"],
+      "matches": ["https://www.notion.so/*"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.notion.so/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
