@@ -215,8 +215,19 @@
     /* Rule list */
     .rules-container { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
 
+    .overlay-rules-container {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      margin-bottom: 4px;
+    }
+
     /* Rule card */
     .rule-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface); overflow: hidden; transition: border-color .15s;
+    }
+    .overlay-rule-card {
       border: 1px solid var(--border); border-radius: 8px;
       background: var(--surface); overflow: hidden; transition: border-color .15s;
     }
@@ -224,8 +235,16 @@
     .rule-card-header {
       display: flex; align-items: flex-start; padding: 10px 11px; gap: 9px;
     }
+    .overlay-rule-header {
+      display: flex; align-items: flex-start; padding: 10px 11px; gap: 9px;
+    }
     .rule-card-info { flex: 1; min-width: 0; }
+    .overlay-rule-info { flex: 1; min-width: 0; }
     .rule-card-name {
+      font-weight: 600; font-size: 12px; margin-bottom: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .overlay-rule-name {
       font-weight: 600; font-size: 12px; margin-bottom: 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
@@ -233,15 +252,42 @@
       font-size: 11px; color: var(--text2);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .overlay-rule-desc {
+      font-size: 11px; color: var(--text2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .rule-card-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .overlay-rule-actions { display: flex; gap: 2px; flex-shrink: 0; }
     .rule-card-actions button {
       background: none; border: none; color: var(--text2);
       cursor: pointer; padding: 4px 6px; border-radius: 4px;
       font-size: 12px; transition: background .1s, color .1s; line-height: 1;
     }
+    .overlay-rule-actions button {
+      background: none; border: none; color: var(--text2);
+      cursor: pointer; padding: 4px 6px; border-radius: 4px;
+      font-size: 12px; transition: background .1s, color .1s; line-height: 1;
+    }
     .rule-card-actions button:hover { background: var(--surface2); color: var(--text); }
+    .overlay-rule-actions button:hover { background: var(--surface2); color: var(--text); }
     .rule-card-actions button[data-action="delete"]:hover { color: var(--error); }
+    .overlay-rule-actions button[data-overlay-action="delete"]:hover { color: var(--error); }
     .rule-card-actions button:disabled { opacity: .35; cursor: not-allowed; }
+
+    .overlay-rule-toggle {
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .hint {
+      color: var(--text3);
+      font-size: 11px;
+      margin-top: 2px;
+      line-height: 1.35;
+    }
 
     /* Rule log */
     .rule-log {
@@ -308,6 +354,7 @@
       <div class="tabs">
         <button class="tab-btn active" data-tab="automations">Automacoes</button>
         <button class="tab-btn" data-tab="databases">Databases</button>
+        <button class="tab-btn" data-tab="overlay">Overlay</button>
       </div>
       <div class="tab-panels">
 
@@ -334,6 +381,16 @@
               <button class="btn btn-ghost btn-sm" id="btn-refresh-dbs">&#8635; Atualizar</button>
             </div>
             <div id="databases-container"></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-tab="overlay">
+          <div class="content">
+            <div class="row row-between" style="margin-bottom:11px">
+              <div class="section-label" style="margin-bottom:0">Overlay de Calendario</div>
+              <button class="btn btn-primary btn-sm" id="btn-add-overlay-rule">+ Nova Regra</button>
+            </div>
+            <div id="overlay-rules-container" class="overlay-rules-container"></div>
           </div>
         </div>
 
@@ -371,6 +428,66 @@
           <div class="row" style="margin-top:10px">
             <button class="btn btn-secondary flex1" id="btn-editor-cancel">Cancelar</button>
             <button class="btn btn-primary flex1" id="btn-editor-save">Salvar Regra</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="screen-overlay-editor" class="screen">
+      <div class="scroll-area">
+        <div class="content">
+          <h2>Regra de Overlay</h2>
+          <p class="desc">Sobreponha a tabela X na visualizacao de calendario semanal/mensal da tabela Y.</p>
+
+          <div class="field">
+            <label>Nome da Regra</label>
+            <input type="text" id="overlay-name" placeholder="Ex: Objetivos no calendario de conteudo" maxlength="90">
+          </div>
+
+          <div class="field">
+            <label>Ativa</label>
+            <select id="overlay-enabled">
+              <option value="true">Sim</option>
+              <option value="false">Nao</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Database Fonte (Tabela X)</label>
+            <select id="overlay-source-db"></select>
+          </div>
+
+          <div class="field">
+            <label>Database Alvo (Tabela Y)</label>
+            <select id="overlay-target-db"></select>
+            <div class="hint">Se selecionar "Qualquer calendario", a regra pode aparecer em qualquer calendario aberto.</div>
+          </div>
+
+          <div class="field">
+            <label>Propriedade de Data (na X)</label>
+            <select id="overlay-date-prop"></select>
+          </div>
+
+          <div class="field">
+            <label>Propriedade de Hover/Label (na X)</label>
+            <select id="overlay-label-prop"></select>
+          </div>
+
+          <div class="field">
+            <label>Propriedade de Cor (na X)</label>
+            <select id="overlay-color-prop"></select>
+            <div class="hint">Aceita tipo select/status. Se vazio, usa cor padrao.</div>
+          </div>
+
+          <div class="field">
+            <label>Filtro JSON (opcional)</label>
+            <textarea id="overlay-filter" rows="5" class="code-editor" style="min-height:140px" placeholder='{"property":"Status","status":{"does_not_equal":"Concluido"}}'></textarea>
+          </div>
+
+          <div id="status-overlay-editor" class="status"></div>
+          <div class="row" style="margin-top:11px">
+            <button class="btn btn-secondary flex1" id="btn-overlay-cancel">Cancelar</button>
+            <button class="btn btn-primary flex1" id="btn-overlay-save">Salvar Overlay</button>
           </div>
         </div>
       </div>

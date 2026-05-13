@@ -10,28 +10,37 @@ const NOTION_API = 'https://api.notion.com/v1';
 const NOTION_VER = '2022-06-28';
 
 async function validateApiKey(key) {
-  const res = await fetch(`${NOTION_API}/users/me`, {
-    headers: { 'Authorization': `Bearer ${key}`, 'Notion-Version': NOTION_VER },
-  });
-  return res.ok;
+  try {
+    await notionFetch('/users/me', 'GET', null, key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-async function notionFetch(path, method = 'GET', body = null) {
-  const { apiKey } = await storageGet('apiKey');
-  if (!apiKey) throw new Error('API Key nao configurada.');
-  const opts = {
-    method,
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Notion-Version': NOTION_VER,
-      'Content-Type': 'application/json',
-    },
-  };
-  if (body) opts.body = JSON.stringify(body);
-  const res  = await fetch(`${NOTION_API}${path}`, opts);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || `Erro HTTP ${res.status}`);
-  return data;
+function notionFetch(path, method = 'GET', body = null, apiKeyOverride = '') {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'na-notion-request',
+        path,
+        method,
+        body,
+        apiKey: apiKeyOverride || undefined,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message || 'Falha de comunicacao com o background'));
+          return;
+        }
+        if (!response || !response.ok) {
+          reject(new Error((response && response.error) || 'Erro ao consultar a API do Notion'));
+          return;
+        }
+        resolve(response.data);
+      }
+    );
+  });
 }
 
 async function fetchDatabases() {
@@ -53,6 +62,33 @@ async function loadRules() {
 }
 async function saveRules(rules) { await storageSet({ rules }); }
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ── CALENDAR OVERLAY RULES CRUD ─────────────────────────────
+const OVERLAY_RULES_KEY = 'na_calendar_overlay_rules';
+
+async function loadOverlayRules() {
+  const data = await storageGet(OVERLAY_RULES_KEY);
+  const rules = data[OVERLAY_RULES_KEY];
+  return Array.isArray(rules) ? rules : [];
+}
+
+async function saveOverlayRules(rules) {
+  await storageSet({ [OVERLAY_RULES_KEY]: rules });
+}
+
+function createDefaultOverlayRule() {
+  return {
+    id: generateId(),
+    name: 'Overlay de objetivos',
+    enabled: true,
+    sourceDatabaseId: '',
+    targetDatabaseId: '',
+    sourceDateProperty: 'Data',
+    sourceLabelProperty: 'Name',
+    sourceColorProperty: '',
+    filter: null,
+  };
+}
 
 // ── SANDBOX ──────────────────────────────────────────────────
 let sandboxReady = false;
@@ -164,6 +200,7 @@ function switchTab(tab) {
 // ── DATABASES TAB ────────────────────────────────────────────
 async function loadDatabasesTab() {
   const container = document.getElementById('databases-container');
+  if (!container) return;
   container.innerHTML = '<div class="loading-inline"><div class="spinner-sm"></div> Carregando databases...</div>';
   try {
     const dbs = await fetchDatabases();
@@ -198,6 +235,7 @@ async function loadDatabasesTab() {
 // ── RULES RENDER ─────────────────────────────────────────────
 async function renderRules() {
   const container = document.getElementById('rules-container');
+  if (!container) return;
   const rules = await loadRules();
   if (rules.length === 0) {
     container.innerHTML =
@@ -228,6 +266,245 @@ async function renderRules() {
       '<div class="rule-log" id="log-' + rule.id + '"></div>';
     container.appendChild(card);
   }
+}
+
+// ── OVERLAY RENDER ──────────────────────────────────────────
+let editingOverlayRuleId = null;
+let overlayDatabasesCache = null;
+
+async function renderOverlayRules() {
+  const container = document.getElementById('overlay-rules-container');
+  if (!container) {
+    console.log('[Notion Automator] Container overlay-rules-container nao encontrado');
+    console.log('[Notion Automator] Elementos com "overlay" no ID:', document.querySelectorAll('[id*="overlay"]').length);
+    console.log('[Notion Automator] screen-main visível?', document.getElementById('screen-main')?.style.display);
+    console.log('[Notion Automator] Todos os elementos do DOM:', document.querySelectorAll('div').length);
+    
+    // Tenta encontrar usando CSS selector como fallback
+    const fallback = document.querySelector('[id="overlay-rules-container"]');
+    if (fallback) {
+      console.log('[Notion Automator] Encontrado usando querySelector!');
+    }
+    return;
+  }
+
+  const rules = await loadOverlayRules();
+  console.log('[Notion Automator] Renderizando', rules.length, 'regras de overlay');
+  
+  if (rules.length === 0) {
+    container.innerHTML =
+      '<div class="empty-state">' +
+        '<div class="empty-icon">&#128197;</div>' +
+        '<p>Nenhuma regra de overlay criada.<br>Use <strong>+ Nova Regra</strong> para mapear tabela X sobre calendario de tabela Y.</p>' +
+      '</div>';
+    console.log('[Notion Automator] Nenhuma regra, exibindo empty state');
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const rule of rules) {
+    const card = document.createElement('div');
+    card.className = 'overlay-rule-card';
+    card.dataset.overlayRuleId = rule.id;
+    card.innerHTML =
+      '<div class="overlay-rule-header">' +
+        '<input class="overlay-rule-toggle" type="checkbox" data-overlay-action="toggle" ' + (rule.enabled ? 'checked' : '') + '>' +
+        '<div class="overlay-rule-info">' +
+          '<div class="overlay-rule-name">' + escapeHtml(rule.name || 'Regra sem nome') + '</div>' +
+          '<div class="overlay-rule-desc">X: ' + escapeHtml(shortDb(rule.sourceDatabaseId)) + '  →  Y: ' + escapeHtml(shortDb(rule.targetDatabaseId) || 'qualquer calendario') + '</div>' +
+        '</div>' +
+        '<div class="overlay-rule-actions">' +
+          '<button data-overlay-action="edit" title="Editar">&#9998;</button>' +
+          '<button data-overlay-action="delete" title="Excluir">&#10005;</button>' +
+        '</div>' +
+      '</div>';
+    container.appendChild(card);
+    console.log('[Notion Automator] Regra de overlay renderizada:', rule.name);
+  }
+  console.log('[Notion Automator] Renderizacao completa, total de regras:', rules.length);
+}
+
+function shortDb(value) {
+  const raw = String(value || '').replace(/-/g, '');
+  if (!raw) return '';
+  return raw.slice(0, 8) + '...';
+}
+
+async function openOverlayEditor(ruleId) {
+  editingOverlayRuleId = ruleId || null;
+  setHeader(ruleId ? 'Editar Overlay' : 'Novo Overlay', true);
+  setStatus('status-overlay-editor', '');
+
+  const rules = await loadOverlayRules();
+  const current = ruleId ? rules.find(r => r.id === ruleId) : null;
+  const rule = Object.assign(createDefaultOverlayRule(), current || {});
+
+  const nameEl = document.getElementById('overlay-name');
+  const enabledEl = document.getElementById('overlay-enabled');
+  const sourceDbEl = document.getElementById('overlay-source-db');
+  const targetDbEl = document.getElementById('overlay-target-db');
+  const filterEl = document.getElementById('overlay-filter');
+
+  nameEl.value = rule.name || '';
+  enabledEl.value = rule.enabled ? 'true' : 'false';
+  filterEl.value = rule.filter ? JSON.stringify(rule.filter, null, 2) : '';
+
+  if (!overlayDatabasesCache) {
+    overlayDatabasesCache = await fetchDatabases();
+  }
+
+  fillDatabaseSelect(sourceDbEl, overlayDatabasesCache, rule.sourceDatabaseId, false);
+  fillDatabaseSelect(targetDbEl, overlayDatabasesCache, rule.targetDatabaseId, true);
+
+  await fillOverlayPropertySelects(rule.sourceDatabaseId, rule);
+
+  showScreen('screen-overlay-editor');
+  nameEl.focus();
+}
+
+function fillDatabaseSelect(selectEl, dbs, selectedId, includeAnyOption) {
+  if (!selectEl) return;
+  const selected = String(selectedId || '');
+
+  let html = '';
+  if (includeAnyOption) {
+    html += '<option value="">Qualquer calendario</option>';
+  }
+
+  html += dbs.map(db => {
+    const id = String(db.id || '');
+    const title = escapeHtml(getDatabaseTitle(db));
+    const isSelected = normalizeDbId(id) === normalizeDbId(selected);
+    return '<option value="' + escapeHtml(id) + '" ' + (isSelected ? 'selected' : '') + '>' + title + '</option>';
+  }).join('');
+
+  selectEl.innerHTML = html;
+}
+
+async function fillOverlayPropertySelects(sourceDbId, presetRule) {
+  const dateEl = document.getElementById('overlay-date-prop');
+  const labelEl = document.getElementById('overlay-label-prop');
+  const colorEl = document.getElementById('overlay-color-prop');
+
+  if (!sourceDbId) {
+    dateEl.innerHTML = '<option value="">Selecione uma database fonte</option>';
+    labelEl.innerHTML = '<option value="">Selecione uma database fonte</option>';
+    colorEl.innerHTML = '<option value="">Sem cor customizada</option>';
+    return;
+  }
+
+  const schema = await notionFetch('/databases/' + sourceDbId);
+  const props = schema.properties || {};
+
+  const dateProps = Object.entries(props).filter(([, prop]) => ['date', 'formula', 'rollup'].includes(prop.type));
+  const labelProps = Object.entries(props).filter(([, prop]) => ['title', 'rich_text', 'select', 'status', 'formula'].includes(prop.type));
+  const colorProps = Object.entries(props).filter(([, prop]) => ['select', 'status'].includes(prop.type));
+
+  setPropertyOptions(dateEl, dateProps, presetRule.sourceDateProperty, 'Escolha a propriedade de data');
+  setPropertyOptions(labelEl, labelProps, presetRule.sourceLabelProperty, 'Escolha a propriedade de label');
+  setPropertyOptions(colorEl, colorProps, presetRule.sourceColorProperty, 'Sem cor customizada', true);
+}
+
+function setPropertyOptions(selectEl, propsEntries, selectedName, firstLabel, allowEmpty) {
+  let html = '';
+  if (allowEmpty) {
+    html += '<option value="">' + escapeHtml(firstLabel) + '</option>';
+  }
+
+  if (!propsEntries.length) {
+    selectEl.innerHTML = html + '<option value="">Nenhuma propriedade compativel encontrada</option>';
+    return;
+  }
+
+  html += propsEntries.map(([name, prop]) => {
+    const selected = name === selectedName ? 'selected' : '';
+    return '<option value="' + escapeHtml(name) + '" ' + selected + '>' + escapeHtml(name) + ' [' + prop.type + ']</option>';
+  }).join('');
+
+  selectEl.innerHTML = html;
+}
+
+async function handleSaveOverlayRule() {
+  const name = document.getElementById('overlay-name').value.trim();
+  const enabled = document.getElementById('overlay-enabled').value === 'true';
+  const sourceDatabaseId = document.getElementById('overlay-source-db').value.trim();
+  const targetDatabaseId = document.getElementById('overlay-target-db').value.trim();
+  const sourceDateProperty = document.getElementById('overlay-date-prop').value.trim();
+  const sourceLabelProperty = document.getElementById('overlay-label-prop').value.trim();
+  const sourceColorProperty = document.getElementById('overlay-color-prop').value.trim();
+  const filterText = document.getElementById('overlay-filter').value.trim();
+
+  if (!name) {
+    setStatus('status-overlay-editor', 'Informe um nome para a regra.', 'error');
+    return;
+  }
+  if (!sourceDatabaseId) {
+    setStatus('status-overlay-editor', 'Selecione a database fonte (Tabela X).', 'error');
+    return;
+  }
+  if (!sourceDateProperty) {
+    setStatus('status-overlay-editor', 'Selecione a propriedade de data.', 'error');
+    return;
+  }
+  if (!sourceLabelProperty) {
+    setStatus('status-overlay-editor', 'Selecione a propriedade de label.', 'error');
+    return;
+  }
+
+  let parsedFilter = null;
+  if (filterText) {
+    try {
+      parsedFilter = JSON.parse(filterText);
+    } catch {
+      setStatus('status-overlay-editor', 'Filtro JSON invalido.', 'error');
+      return;
+    }
+  }
+
+  const rules = await loadOverlayRules();
+  const item = {
+    id: editingOverlayRuleId || generateId(),
+    name: name,
+    enabled: enabled,
+    sourceDatabaseId: sourceDatabaseId,
+    targetDatabaseId: targetDatabaseId,
+    sourceDateProperty: sourceDateProperty,
+    sourceLabelProperty: sourceLabelProperty,
+    sourceColorProperty: sourceColorProperty,
+    filter: parsedFilter,
+  };
+
+  if (editingOverlayRuleId) {
+    const idx = rules.findIndex(r => r.id === editingOverlayRuleId);
+    if (idx >= 0) rules[idx] = item;
+  } else {
+    rules.push(item);
+  }
+
+  await saveOverlayRules(rules);
+  await navigateToMain();
+}
+
+async function handleDeleteOverlayRule(ruleId) {
+  const rules = await loadOverlayRules();
+  const rule = rules.find(r => r.id === ruleId);
+  if (!rule) return;
+  if (!confirm('Excluir regra de overlay "' + (rule.name || 'sem nome') + '"?')) return;
+  await saveOverlayRules(rules.filter(r => r.id !== ruleId));
+  await renderOverlayRules();
+}
+
+async function handleToggleOverlayRule(ruleId, enabled) {
+  const rules = await loadOverlayRules();
+  const idx = rules.findIndex(r => r.id === ruleId);
+  if (idx < 0) return;
+  rules[idx] = Object.assign({}, rules[idx], { enabled: !!enabled });
+  await saveOverlayRules(rules);
+  await renderOverlayRules();
+}
+
+function normalizeDbId(value) {
+  return String(value || '').replace(/[^a-fA-F0-9]/g, '').toLowerCase();
 }
 
 // ── RULES ACTIONS ────────────────────────────────────────────
@@ -388,17 +665,14 @@ async function handleSaveRule() {
 
 // ── NAVIGATION ───────────────────────────────────────────────
 async function navigateToMain() {
+  console.log('[Notion Automator] Navegando para tela principal...');
   setHeader('Notion Automator', false);
   await renderRules();
+  console.log('[Notion Automator] Regras de automacao renderizadas');
+  await renderOverlayRules();
+  console.log('[Notion Automator] Regras de overlay renderizadas');
   showScreen('screen-main');
-  // Activate last used tab
-  document.querySelectorAll('.tab-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === activeTab);
-  });
-  document.querySelectorAll('.tab-panel').forEach(p => {
-    p.classList.toggle('active', p.dataset.tab === activeTab);
-  });
-  if (activeTab === 'databases') loadDatabasesTab();
+  console.log('[Notion Automator] Tela principal exibida');
 }
 
 // ── DEFAULT RULE CODE ────────────────────────────────────────
@@ -464,29 +738,45 @@ async function handleReset() {
 }
 async function handleResetAll() {
   if (!confirm('Apagar TUDO, incluindo API Key e todas as regras?\nEssa acao nao pode ser desfeita.')) return;
-  await storageRemove(['apiKey', 'rules']);
+  await storageRemove(['apiKey', 'rules', OVERLAY_RULES_KEY]);
   location.reload();
 }
 
 // ── INIT ─────────────────────────────────────────────────────
 async function initApp() {
+  console.log('[Notion Automator] Popup carregando...');
   const { apiKey } = await storageGet('apiKey');
-  if (!apiKey) { showScreen('screen-api'); return; }
+  if (!apiKey) {
+    console.log('[Notion Automator] Nenhuma API Key, exibindo tela de setup');
+    showScreen('screen-api');
+    return;
+  }
+  console.log('[Notion Automator] API Key encontrada, navegando para tela principal');
   await navigateToMain();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   initSandbox();
 
+  function onClick(id, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', handler);
+  }
+
+  function onKeydown(id, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', handler);
+  }
+
   // Header
-  document.getElementById('btn-header-back').addEventListener('click', navigateToMain);
+  onClick('btn-header-back', navigateToMain);
 
   // API screen
-  document.getElementById('btn-save-api').addEventListener('click', handleSaveApi);
-  document.getElementById('input-api-key').addEventListener('keydown', e => {
+  onClick('btn-save-api', handleSaveApi);
+  onKeydown('input-api-key', e => {
     if (e.key === 'Enter') handleSaveApi();
   });
-  document.getElementById('link-integrations').addEventListener('click', e => {
+  onClick('link-integrations', e => {
     e.preventDefault();
     chrome.tabs.create({ url: 'https://www.notion.so/my-integrations' });
   });
@@ -497,19 +787,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Databases tab
-  document.getElementById('btn-refresh-dbs').addEventListener('click', loadDatabasesTab);
+  onClick('btn-refresh-dbs', loadDatabasesTab);
 
   // Automations tab
-  document.getElementById('btn-add-rule').addEventListener('click', () => openRuleEditor(null));
-  document.getElementById('btn-export-rules').addEventListener('click', handleExportRules);
-  document.getElementById('btn-import-rules').addEventListener('click', handleImportRules);
+  onClick('btn-add-rule', () => openRuleEditor(null));
+  onClick('btn-export-rules', handleExportRules);
+  onClick('btn-import-rules', handleImportRules);
+
+  // Overlay tab
+  onClick('btn-add-overlay-rule', () => openOverlayEditor(null));
+  onClick('btn-overlay-cancel', navigateToMain);
+  onClick('btn-overlay-save', handleSaveOverlayRule);
+
+  const sourceDbSelect = document.getElementById('overlay-source-db');
+  if (sourceDbSelect) {
+    sourceDbSelect.addEventListener('change', async () => {
+      const sourceDbId = sourceDbSelect.value;
+      await fillOverlayPropertySelects(sourceDbId, {
+        sourceDateProperty: '',
+        sourceLabelProperty: '',
+        sourceColorProperty: '',
+      });
+    });
+  }
 
   // Reset
-  document.getElementById('btn-reset').addEventListener('click', handleReset);
-  document.getElementById('btn-reset-all').addEventListener('click', handleResetAll);
+  onClick('btn-reset', handleReset);
+  onClick('btn-reset-all', handleResetAll);
 
   // Rule cards (event delegation)
-  document.getElementById('rules-container').addEventListener('click', e => {
+  const rulesContainer = document.getElementById('rules-container');
+  if (rulesContainer) rulesContainer.addEventListener('click', e => {
     const btn  = e.target.closest('[data-action]');
     if (!btn) return;
     const card = btn.closest('[data-rule-id]');
@@ -522,12 +830,32 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (act === 'delete')    handleDeleteRule(id);
   });
 
+  const overlayContainer = document.getElementById('overlay-rules-container');
+  if (overlayContainer) overlayContainer.addEventListener('click', e => {
+    const btn = e.target.closest('[data-overlay-action]');
+    if (!btn) return;
+    const card = btn.closest('[data-overlay-rule-id]');
+    if (!card) return;
+    const id = card.dataset.overlayRuleId;
+    const action = btn.dataset.overlayAction;
+    if (action === 'edit') openOverlayEditor(id);
+    if (action === 'delete') handleDeleteOverlayRule(id);
+  });
+
+  if (overlayContainer) overlayContainer.addEventListener('change', e => {
+    const toggle = e.target.closest('[data-overlay-action="toggle"]');
+    if (!toggle) return;
+    const card = toggle.closest('[data-overlay-rule-id]');
+    if (!card) return;
+    handleToggleOverlayRule(card.dataset.overlayRuleId, toggle.checked);
+  });
+
   // Rule editor
-  document.getElementById('btn-editor-cancel').addEventListener('click', navigateToMain);
-  document.getElementById('btn-editor-save').addEventListener('click', handleSaveRule);
+  onClick('btn-editor-cancel', navigateToMain);
+  onClick('btn-editor-save', handleSaveRule);
 
   // Tab key inserts 2 spaces in code editor
-  document.getElementById('editor-code').addEventListener('keydown', e => {
+  onKeydown('editor-code', e => {
     if (e.key !== 'Tab') return;
     e.preventDefault();
     const el    = e.target;
@@ -540,6 +868,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Escape closes editor
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && document.getElementById('screen-rule-editor').classList.contains('active')) {
+      navigateToMain();
+      return;
+    }
+    if (e.key === 'Escape' && document.getElementById('screen-overlay-editor').classList.contains('active')) {
       navigateToMain();
     }
   });
