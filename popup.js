@@ -746,15 +746,6 @@ async function handleSaveApi() {
       return;
     }
     await storageSet({ apiKey: key });
-    const existing = await loadRules();
-    if (existing.length === 0) {
-      await saveRules([{
-        id: generateId(),
-        name: 'Explorar Databases',
-        description: 'Lista todos os databases acessiveis e suas propriedades.',
-        code: DEFAULT_RULE_CODE,
-      }]);
-    }
     setStatus('status-api', '');
     await navigateToMain();
   } catch (e) {
