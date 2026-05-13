@@ -63,23 +63,36 @@ async function loadRules() {
 async function saveRules(rules) { await storageSet({ rules }); }
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-// ── SNIPPETS ─────────────────────────────────────────────────
-const SNIPPETS = [
-  { id: 'create-content-by-theme', label: 'Criar Conteúdo por Tema', file: 'snipets/create-content-by-theme.js' },
-  { id: 'create-task-by-format', label: 'Criar Tarefa por Formato', file: 'snipets/create-task-by-format-default-task.js' },
+// ── SNIPPETS COMO REGRAS INICIAIS ─────────────────────────────
+const SNIPPET_FILES = [
+  { file: 'snipets/create-content-by-theme.js', name: 'Criar Conteúdo por Tema', desc: 'Gera conteúdos associando temas e formatos.' },
+  { file: 'snipets/create-task-by-format-default-task.js', name: 'Criar Tarefa por Formato', desc: 'Cria tarefas padrão baseadas em formatos e tipos.' },
 ];
 
-async function loadSnippetContent(snippetId) {
-  const snippet = SNIPPETS.find(s => s.id === snippetId);
-  if (!snippet) return DEFAULT_RULE_CODE;
-  try {
-    const url = chrome.runtime.getURL(snippet.file);
-    const response = await fetch(url);
-    if (!response.ok) return DEFAULT_RULE_CODE;
-    return await response.text();
-  } catch (e) {
-    console.warn('[Notion Automator] Erro ao carregar snippet:', e);
-    return DEFAULT_RULE_CODE;
+async function loadInitialRules() {
+  const existing = await loadRules();
+  if (existing.length > 0) return; // Já tem regras, não sobrescrever
+  
+  const initialRules = [];
+  for (const snippet of SNIPPET_FILES) {
+    try {
+      const url = chrome.runtime.getURL(snippet.file);
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const code = await response.text();
+      initialRules.push({
+        id: generateId(),
+        name: snippet.name,
+        description: snippet.desc,
+        code: code,
+      });
+    } catch (e) {
+      console.warn('[Notion Automator] Erro ao carregar snippet inicial:', e);
+    }
+  }
+  
+  if (initialRules.length > 0) {
+    await saveRules(initialRules);
   }
 }
 
@@ -772,6 +785,7 @@ async function initApp() {
     return;
   }
   console.log('[Notion Automator] API Key encontrada, navegando para tela principal');
+  await loadInitialRules();
   await navigateToMain();
 }
 
@@ -873,19 +887,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Rule editor
   onClick('btn-editor-cancel', navigateToMain);
   onClick('btn-editor-save', handleSaveRule);
-
-  // Snippet selector
-  const snippetSelect = document.getElementById('editor-snippet');
-  if (snippetSelect) {
-    snippetSelect.addEventListener('change', async e => {
-      const snippetId = e.target.value;
-      if (!snippetId) return;
-      const codeEl = document.getElementById('editor-code');
-      const content = await loadSnippetContent(snippetId);
-      codeEl.value = content;
-      e.target.value = ''; // Reset selector
-    });
-  }
 
   // Tab key inserts 2 spaces in code editor
   onKeydown('editor-code', e => {
