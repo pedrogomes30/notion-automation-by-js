@@ -19,7 +19,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["panel.html", "popup.js", "sandbox.html"],
+      "resources": ["panel.html", "popup.js", "sandbox.html", "snipets/*.js"],
       "matches": ["https://www.notion.so/*"]
     }
   ],

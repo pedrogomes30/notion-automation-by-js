@@ -409,6 +409,17 @@
             <label>Nome da Automacao</label>
             <input type="text" id="editor-name" placeholder="Ex: Gerar Conteudos por Tema" maxlength="80">
           </div>
+          
+          <div class="field">
+            <label>Carregar Modelo</label>
+            <select id="editor-snippet">
+              <option value="">-- Começar do zero --</option>
+              <option value="create-content-by-theme">Criar Conteúdo por Tema</option>
+              <option value="create-task-by-format">Criar Tarefa por Formato</option>
+            </select>
+            <p class="help">Selecione um modelo para carregar um exemplo pronto</p>
+          </div>
+
           <div class="field">
             <label>Descricao</label>
             <textarea id="editor-desc" placeholder="Descreva o que essa automacao faz..." rows="2" maxlength="300"></textarea>

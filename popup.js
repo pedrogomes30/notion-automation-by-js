@@ -63,6 +63,26 @@ async function loadRules() {
 async function saveRules(rules) { await storageSet({ rules }); }
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+// ── SNIPPETS ─────────────────────────────────────────────────
+const SNIPPETS = [
+  { id: 'create-content-by-theme', label: 'Criar Conteúdo por Tema', file: 'snipets/create-content-by-theme.js' },
+  { id: 'create-task-by-format', label: 'Criar Tarefa por Formato', file: 'snipets/create-task-by-format-default-task.js' },
+];
+
+async function loadSnippetContent(snippetId) {
+  const snippet = SNIPPETS.find(s => s.id === snippetId);
+  if (!snippet) return DEFAULT_RULE_CODE;
+  try {
+    const url = chrome.runtime.getURL(snippet.file);
+    const response = await fetch(url);
+    if (!response.ok) return DEFAULT_RULE_CODE;
+    return await response.text();
+  } catch (e) {
+    console.warn('[Notion Automator] Erro ao carregar snippet:', e);
+    return DEFAULT_RULE_CODE;
+  }
+}
+
 // ── CALENDAR OVERLAY RULES CRUD ─────────────────────────────
 const OVERLAY_RULES_KEY = 'na_calendar_overlay_rules';
 
@@ -853,6 +873,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Rule editor
   onClick('btn-editor-cancel', navigateToMain);
   onClick('btn-editor-save', handleSaveRule);
+
+  // Snippet selector
+  const snippetSelect = document.getElementById('editor-snippet');
+  if (snippetSelect) {
+    snippetSelect.addEventListener('change', async e => {
+      const snippetId = e.target.value;
+      if (!snippetId) return;
+      const codeEl = document.getElementById('editor-code');
+      const content = await loadSnippetContent(snippetId);
+      codeEl.value = content;
+      e.target.value = ''; // Reset selector
+    });
+  }
 
   // Tab key inserts 2 spaces in code editor
   onKeydown('editor-code', e => {
