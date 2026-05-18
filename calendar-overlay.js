@@ -225,6 +225,7 @@
     try {
       const currentDbId = getCurrentDatabaseId();
       const allEntriesByDate = new Map();
+      const allEntriesByWeekday = new Map();
 
       for (const rule of state.rules) {
         if (!ruleAppliesToCurrentPage(rule, currentDbId)) {
@@ -234,13 +235,14 @@
 
         const entries = await getRuleEntries(rule, forceDataReload);
         console.log('[Notion Automator] Regra', rule.name || rule.id, 'retornou', entries.length, 'entrada(s)');
-        mergeEntries(allEntriesByDate, entries);
+        mergeEntries({ byDate: allEntriesByDate, byWeekday: allEntriesByWeekday }, entries);
       }
 
-      const summary = decorateDays(dayNodes, allEntriesByDate);
+      const summary = decorateDays(dayNodes, allEntriesByDate, allEntriesByWeekday);
       console.log('[Notion Automator] Overlay resumo:', {
         diasDetectados: dayNodes.length,
         datasComEntradas: allEntriesByDate.size,
+        diasDaSemanaComEntradas: allEntriesByWeekday.size,
         diasDecorados: summary.decorated,
         diasSemData: summary.noDate,
         diasDecoradosFallbackDia: summary.decoratedByDayFallback,
@@ -287,7 +289,8 @@
     const props = (page && page.properties) || {};
     const dateRaw = props[rule.sourceDateProperty];
     const dateKey = propertyToDateKey(dateRaw);
-    if (!dateKey) return null;
+    const weekdayKey = dateKey ? '' : propertyToWeekdayKey(dateRaw);
+    if (!dateKey && !weekdayKey) return null;
 
     const labelRaw = props[rule.sourceLabelProperty];
     const title = propertyToText(labelRaw) || getPageTitle(props) || 'Objetivo';
@@ -295,17 +298,23 @@
     const colorRaw = rule.sourceColorProperty ? props[rule.sourceColorProperty] : null;
     const color = propertyToColor(colorRaw) || colorFromSeed(title);
 
-    return { dateKey: dateKey, title: title, color: color };
+    return { dateKey: dateKey, weekdayKey: weekdayKey, title: title, color: color };
   }
 
   function mergeEntries(targetMap, entries) {
     for (const entry of entries) {
-      if (!targetMap.has(entry.dateKey)) targetMap.set(entry.dateKey, []);
-      targetMap.get(entry.dateKey).push(entry);
+      if (entry.dateKey) {
+        if (!targetMap.byDate.has(entry.dateKey)) targetMap.byDate.set(entry.dateKey, []);
+        targetMap.byDate.get(entry.dateKey).push(entry);
+      }
+      if (entry.weekdayKey) {
+        if (!targetMap.byWeekday.has(entry.weekdayKey)) targetMap.byWeekday.set(entry.weekdayKey, []);
+        targetMap.byWeekday.get(entry.weekdayKey).push(entry);
+      }
     }
   }
 
-  function decorateDays(dayNodes, entriesByDate) {
+  function decorateDays(dayNodes, entriesByDate, entriesByWeekday) {
     let decorated = 0;
     let noDate = 0;
     let decoratedByDayFallback = 0;
@@ -319,6 +328,13 @@
         noDate += 1;
       } else {
         entries = entriesByDate.get(dateKey) || null;
+      }
+
+      if (!entries || !entries.length) {
+        const weekdayKey = nodeToWeekdayKey(node, dateKey);
+        if (weekdayKey) {
+          entries = entriesByWeekday.get(weekdayKey) || null;
+        }
       }
 
       if ((!entries || !entries.length) && !dateKey) {
@@ -460,6 +476,45 @@
     if (!match) return '';
     const day = Number(match[1]);
     return String(day).padStart(2, '0');
+  }
+
+  function nodeToWeekdayKey(node, dateKey) {
+    const iso = dateKey || nodeToDateKey(node);
+    if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+
+    const date = new Date(iso + 'T12:00:00');
+    if (Number.isNaN(date.getTime())) return '';
+
+    return weekdayIndexToKey(date.getDay());
+  }
+
+  function weekdayIndexToKey(index) {
+    const keys = ['DOMINGO', 'SEGUNDA', 'TERCA', 'QUARTA', 'QUINTA', 'SEXTA', 'SABADO'];
+    return keys[index] || '';
+  }
+
+  function normalizeWeekdayText(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z]/g, '');
+  }
+
+  function propertyToWeekdayKey(prop) {
+    const text = propertyToText(prop);
+    const normalized = normalizeWeekdayText(text);
+    if (!normalized) return '';
+
+    const weekdayMap = ['DOMINGO', 'SEGUNDA', 'TERCA', 'QUARTA', 'QUINTA', 'SEXTA', 'SABADO'];
+    for (const weekday of weekdayMap) {
+      const base = normalizeWeekdayText(weekday);
+      if (normalized === base || normalized.startsWith(base) || normalized.includes(base)) {
+        return weekday;
+      }
+    }
+
+    return '';
   }
 
   function buildEntriesByDay(entriesByDate) {

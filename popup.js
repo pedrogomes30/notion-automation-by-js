@@ -48,6 +48,7 @@ async function fetchDatabases() {
     filter: { value: 'database', property: 'object' },
     page_size: 100,
   });
+  console.log('[Notion Automator] Resposta da API de search:', data);
   return data.results || [];
 }
 
@@ -429,11 +430,11 @@ async function fillOverlayPropertySelects(sourceDbId, presetRule) {
   const schema = await notionFetch('/databases/' + sourceDbId);
   const props = schema.properties || {};
 
-  const dateProps = Object.entries(props).filter(([, prop]) => ['date', 'formula', 'rollup'].includes(prop.type));
+  const dateProps = Object.entries(props).filter(([, prop]) => ['date', 'formula', 'rollup', 'title', 'rich_text', 'select', 'status'].includes(prop.type));
   const labelProps = Object.entries(props).filter(([, prop]) => ['title', 'rich_text', 'select', 'status', 'formula'].includes(prop.type));
   const colorProps = Object.entries(props).filter(([, prop]) => ['select', 'status'].includes(prop.type));
 
-  setPropertyOptions(dateEl, dateProps, presetRule.sourceDateProperty, 'Escolha a propriedade de data');
+  setPropertyOptions(dateEl, dateProps, presetRule.sourceDateProperty, 'Escolha a propriedade de origem');
   setPropertyOptions(labelEl, labelProps, presetRule.sourceLabelProperty, 'Escolha a propriedade de label');
   setPropertyOptions(colorEl, colorProps, presetRule.sourceColorProperty, 'Sem cor customizada', true);
 }
@@ -476,7 +477,7 @@ async function handleSaveOverlayRule() {
     return;
   }
   if (!sourceDateProperty) {
-    setStatus('status-overlay-editor', 'Selecione a propriedade de data.', 'error');
+    setStatus('status-overlay-editor', 'Selecione a propriedade de origem.', 'error');
     return;
   }
   if (!sourceLabelProperty) {
