@@ -36,6 +36,7 @@
     storageListener: null,
     urlWatcherTimer: 0,
     rafId: 0,
+    debounceTimer: 0,
     loading: false,
     disabled: false,
     cacheByRule: new Map(),
@@ -74,18 +75,17 @@
       '.' + TOOLTIP_CLASS + ' {',
       '  position: absolute;',
       '  left: 6px;',
-      '  top: 0;',
-      '  transform: translateY(calc(-100% - 8px));',
-      '  max-width: 240px;',
-      '  padding: 7px 9px;',
-      '  border-radius: 8px;',
+      '  top: 28px;',
+      '  transform: none;',
+      '  max-width: 260px;',
+      '  min-width: 120px;',
+      '  padding: 5px 6px;',
+      '  border-radius: 10px;',
       '  background: rgba(15, 18, 22, 0.96);',
       '  border: 1px solid rgba(255,255,255,0.1);',
-      '  color: #f3f4f6;',
-      '  font-size: 11px;',
-      '  line-height: 1.35;',
-      '  text-align: left;',
-      '  white-space: pre-wrap;',
+      '  display: flex;',
+      '  flex-direction: column;',
+      '  gap: 4px;',
       '  box-shadow: 0 6px 20px rgba(0,0,0,0.3);',
       '  opacity: 0;',
       '  visibility: hidden;',
@@ -96,9 +96,70 @@
       '[data-na-cal-overlay-cell="1"]:hover .' + TOOLTIP_CLASS + ' {',
       '  opacity: 1;',
       '  visibility: visible;',
+      '}',
+      '.' + TOOLTIP_CLASS + '-item {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  gap: 6px;',
+      '  padding: 4px 7px;',
+      '  border-radius: 6px;',
+      '  font-size: 11px;',
+      '  line-height: 1.3;',
+      '  color: #f3f4f6;',
+      '  text-align: left;',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '}',
+      '.' + TOOLTIP_CLASS + '-dot {',
+      '  flex-shrink: 0;',
+      '  width: 9px;',
+      '  height: 9px;',
+      '  border-radius: 50%;',
+      '  opacity: 0.9;',
+      '}',
+      '#na-overlay-loading {',
+      '  position: fixed;',
+      '  z-index: 9999;',
+      '  background: rgba(15,18,22,0.82);',
+      '  color: #a5b4fc;',
+      '  font-size: 11px;',
+      '  font-family: sans-serif;',
+      '  padding: 3px 9px;',
+      '  border-radius: 99px;',
+      '  border: 1px solid rgba(165,180,252,0.25);',
+      '  box-shadow: 0 2px 8px rgba(0,0,0,0.3);',
+      '  display: none;',
+      '  align-items: center;',
+      '  gap: 6px;',
+      '  pointer-events: none;',
+      '  user-select: none;',
+      '  transition: opacity 0.15s ease;',
+      '}',
+      '#na-overlay-loading.visible {',
+      '  display: flex;',
+      '}',
+      '@keyframes na-spin {',
+      '  to { transform: rotate(360deg); }',
+      '}',
+      '#na-overlay-loading-dot {',
+      '  width: 8px;',
+      '  height: 8px;',
+      '  border: 2px solid rgba(165,180,252,0.3);',
+      '  border-top-color: #a5b4fc;',
+      '  border-radius: 50%;',
+      '  animation: na-spin 0.7s linear infinite;',
       '}'
     ].join('\n');
     document.documentElement.appendChild(style);
+
+    // Indicador de carregamento
+    if (!document.getElementById('na-overlay-loading')) {
+      var loadingEl = document.createElement('div');
+      loadingEl.id = 'na-overlay-loading';
+      loadingEl.innerHTML = '<div id="na-overlay-loading-dot"></div><span>Overlay...</span>';
+      document.documentElement.appendChild(loadingEl);
+    }
   }
 
   function boot() {
@@ -170,19 +231,64 @@
     }, 1200);
   }
 
+  function findMonthHeadingRect() {
+    // Tenta encontrar o elemento que exibe o mês/ano no cabeçalho do calendário
+    var els = document.querySelectorAll(
+      '[role="heading"], [class*="calendarHeader"] *, [class*="calendar-header"] *, ' +
+      '[class*="CalendarHeader"] *, [class*="toolbar"] *, [class*="Toolbar"] *'
+    );
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.children.length > 4) continue;
+      var text = (el.textContent || '').replace(/[◄►←→‹›<>]/g, '').trim();
+      var m = text.match(/([A-Za-z\u00C0-\u017F]+)\s+(?:de\s+)?(20\d{2})/i);
+      if (!m) continue;
+      var rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return rect;
+    }
+    return null;
+  }
+
+  function setLoadingIndicator(visible) {
+    var el = document.getElementById('na-overlay-loading');
+    if (!el) return;
+    if (visible) {
+      var rect = findMonthHeadingRect();
+      if (rect) {
+        el.style.top   = (rect.top + (rect.height - 22) / 2) + 'px';
+        el.style.left  = (rect.right + 8) + 'px';
+        el.style.right = 'auto';
+      } else {
+        el.style.top   = '12px';
+        el.style.left  = 'auto';
+        el.style.right = '16px';
+      }
+      el.classList.add('visible');
+    } else {
+      el.classList.remove('visible');
+    }
+  }
+
   function scheduleRender(forceDataReload) {
     if (state.disabled) return;
-    if (state.rafId) cancelAnimationFrame(state.rafId);
-    state.rafId = requestAnimationFrame(function() {
-      state.rafId = 0;
-      render(forceDataReload).catch(function(err) {
-        if (isContextInvalidError(err)) {
-          disableOverlay('Contexto da extensao invalidado durante render. Recarregue a pagina do Notion.');
-          return;
-        }
-        console.warn('[Notion Automator] Falha no overlay do calendario:', err);
+    // Mostra o indicador logo ao agendar, não só quando render() começa
+    setLoadingIndicator(true);
+    if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    state.debounceTimer = setTimeout(function() {
+      state.debounceTimer = 0;
+      if (state.rafId) cancelAnimationFrame(state.rafId);
+      state.rafId = requestAnimationFrame(function() {
+        state.rafId = 0;
+        render(forceDataReload).catch(function(err) {
+          setLoadingIndicator(false);
+          if (isContextInvalidError(err)) {
+            disableOverlay('Contexto da extensao invalidado durante render. Recarregue a pagina do Notion.');
+            return;
+          }
+          console.warn('[Notion Automator] Falha no overlay do calendario:', err);
+        });
       });
-    });
+    }, 280);
   }
 
   async function loadRules() {
@@ -207,7 +313,16 @@
 
   async function render(forceDataReload) {
     if (state.disabled) return;
-    if (state.loading) return;
+    if (state.loading) {
+      // já há um render em andamento; quando terminar ele apagará o indicador
+      return;
+    }
+
+    // Força re-detecção do mês/ano e colunas a cada render (TTL=0),
+    // mas mantém o valor antigo como fallback se a detecção falhar.
+    _calYMTime = 0;
+    _weekdayColsCacheTime = 0;
+    _allCalYMTime = 0;
 
     const dayNodes = findDayNodes();
     clearOverlay(dayNodes);
@@ -222,6 +337,7 @@
     }
 
     state.loading = true;
+    setLoadingIndicator(true);
     try {
       const currentDbId = getCurrentDatabaseId();
       const allEntriesByDate = new Map();
@@ -249,6 +365,7 @@
       });
     } finally {
       state.loading = false;
+      setLoadingIndicator(false);
     }
   }
 
@@ -296,9 +413,11 @@
     const title = propertyToText(labelRaw) || getPageTitle(props) || 'Objetivo';
 
     const colorRaw = rule.sourceColorProperty ? props[rule.sourceColorProperty] : null;
-    const color = propertyToColor(colorRaw) || colorFromSeed(title);
+    // Cor da regra: propriedade Notion se configurada, senão cor fixa por regra (semente = id da regra)
+    const ruleColor = colorFromSeed(rule.id || rule.name || 'default');
+    const color = propertyToColor(colorRaw) || ruleColor;
 
-    return { dateKey: dateKey, weekdayKey: weekdayKey, title: title, color: color };
+    return { dateKey: dateKey, weekdayKey: weekdayKey, title: title, color: color, ruleColor: ruleColor };
   }
 
   function mergeEntries(targetMap, entries) {
@@ -317,35 +436,37 @@
   function decorateDays(dayNodes, entriesByDate, entriesByWeekday) {
     let decorated = 0;
     let noDate = 0;
-    let decoratedByDayFallback = 0;
-    const entriesByDay = buildEntriesByDay(entriesByDate);
 
     for (const node of dayNodes) {
-      const dateKey = nodeToDateKey(node);
-      let entries = null;
+      // Tenta obter a data completa (direto ou inferida via mês/ano do calendário)
+      const fullDateKey = inferNodeFullDate(node);
 
-      if (!dateKey) {
-        noDate += 1;
+      let dateEntries = [];
+      let weekdayKey = '';
+
+      if (fullDateKey) {
+        // Entradas de data específica
+        dateEntries = entriesByDate.get(fullDateKey) || [];
+        // Dia da semana calculado a partir da data
+        weekdayKey = nodeToWeekdayKey(node, fullDateKey);
       } else {
-        entries = entriesByDate.get(dateKey) || null;
+        noDate += 1;
+        // Sem data: tenta inferir dia da semana pela coluna
+        weekdayKey = nodeToWeekdayKeyFromColumn(node);
       }
 
-      if (!entries || !entries.length) {
-        const weekdayKey = nodeToWeekdayKey(node, dateKey);
-        if (weekdayKey) {
-          entries = entriesByWeekday.get(weekdayKey) || null;
-        }
+      const weekdayEntries = weekdayKey ? (entriesByWeekday.get(weekdayKey) || []) : [];
+
+      // Combina os dois, sem duplicatas (data específica tem prioridade)
+      const seen = new Set();
+      const entries = [];
+      for (var ei = 0; ei < dateEntries.length + weekdayEntries.length; ei++) {
+        var e = ei < dateEntries.length ? dateEntries[ei] : weekdayEntries[ei - dateEntries.length];
+        var dedupeKey = e.title + '\x00' + e.color;
+        if (!seen.has(dedupeKey)) { seen.add(dedupeKey); entries.push(e); }
       }
 
-      if ((!entries || !entries.length) && !dateKey) {
-        const dayKey = nodeToDayOfMonthKey(node);
-        if (dayKey) {
-          entries = entriesByDay.get(dayKey) || null;
-          if (entries && entries.length) decoratedByDayFallback += 1;
-        }
-      }
-
-      if (!entries || !entries.length) continue;
+      if (!entries.length) continue;
 
       const badge = document.createElement('span');
       badge.className = BADGE_CLASS;
@@ -353,7 +474,22 @@
 
       const tooltip = document.createElement('div');
       tooltip.className = TOOLTIP_CLASS;
-      tooltip.textContent = entries.map(function(item) { return '• ' + item.title; }).join('\n');
+      for (var ti = 0; ti < entries.length; ti++) {
+        var entry = entries[ti];
+        var item = document.createElement('div');
+        item.className = TOOLTIP_CLASS + '-item';
+        item.style.background = 'rgba(255,255,255,0.06)';
+        var dot = document.createElement('span');
+        dot.className = TOOLTIP_CLASS + '-dot';
+        dot.style.background = entry.color;
+        var label = document.createElement('span');
+        label.style.overflow = 'hidden';
+        label.style.textOverflow = 'ellipsis';
+        label.textContent = entry.title;
+        item.appendChild(dot);
+        item.appendChild(label);
+        tooltip.appendChild(item);
+      }
 
       node.setAttribute(DECORATED_ATTR, '1');
       node.setAttribute('data-na-cal-overlay-cell', '1');
@@ -365,7 +501,6 @@
     return {
       decorated: decorated,
       noDate: noDate,
-      decoratedByDayFallback: decoratedByDayFallback,
     };
   }
 
@@ -471,11 +606,32 @@
   }
 
   function nodeToDayOfMonthKey(node) {
-    const raw = (node.textContent || '').trim();
-    const match = raw.match(/\b([1-9]|[12]\d|3[01])\b/);
-    if (!match) return '';
-    const day = Number(match[1]);
-    return String(day).padStart(2, '0');
+    // Percorre apenas os filhos diretos simples para achar o número do dia,
+    // evitando pegar números de nomes de tarefas dentro da célula.
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var child = node.childNodes[i];
+      var txt = '';
+      if (child.nodeType === 3) {
+        txt = (child.textContent || '').trim();
+      } else if (child.nodeType === 1 && child.children.length <= 2) {
+        txt = (child.textContent || '').trim();
+      }
+      if (!txt) continue;
+      // Aceita apenas string que começa com 1 ou 2 dígitos (o número do dia)
+      var m = txt.match(/^(\d{1,2})(?:\D|$)/);
+      if (m) {
+        var day = Number(m[1]);
+        if (day >= 1 && day <= 31) return String(day).padStart(2, '0');
+      }
+    }
+    // Fallback: primeiros 3 caracteres do textContent
+    var raw = (node.textContent || '').trim().slice(0, 3);
+    var fm = raw.match(/^(\d{1,2})/);
+    if (fm) {
+      var d = Number(fm[1]);
+      if (d >= 1 && d <= 31) return String(d).padStart(2, '0');
+    }
+    return '';
   }
 
   function nodeToWeekdayKey(node, dateKey) {
@@ -491,6 +647,132 @@
   function weekdayIndexToKey(index) {
     const keys = ['DOMINGO', 'SEGUNDA', 'TERCA', 'QUARTA', 'QUINTA', 'SEXTA', 'SABADO'];
     return keys[index] || '';
+  }
+
+  // ── CALENDAR MONTH DETECTION ─────────────────────────────────
+  const MONTH_NORM_MAP = {
+    JANEIRO: '01', FEVEREIRO: '02', MARCO: '03', ABRIL: '04', MAIO: '05',
+    JUNHO: '06', JULHO: '07', AGOSTO: '08', SETEMBRO: '09', OUTUBRO: '10',
+    NOVEMBRO: '11', DEZEMBRO: '12',
+    JANUARY: '01', FEBRUARY: '02', MARCH: '03', APRIL: '04', MAY: '05',
+    JUNE: '06', JULY: '07', AUGUST: '08', SEPTEMBER: '09', OCTOBER: '10',
+    NOVEMBER: '11', DECEMBER: '12',
+  };
+
+  let _calYM = null;
+  let _calYMTime = 0;
+  let _allCalYM = [];
+  let _allCalYMTime = 0;
+
+  function detectCalendarYearMonth() {
+    const now = Date.now();
+    if (_calYM && (now - _calYMTime) < 15000) return _calYM;
+    _calYM = null;
+    _calYMTime = now;
+
+    const els = document.querySelectorAll(
+      'button, [role="heading"], [class*="calendar"] *, [class*="header"] *, [class*="nav"] *'
+    );
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.children.length > 4) continue;
+      var text = (el.textContent || '').replace(/[◄►←→‹›<>]/g, '').trim();
+      // match "maio de 2026", "May 2026", "maio 2026" — preserva os dígitos do ano
+      var m = text.match(/([A-Za-z\u00C0-\u017F]+)\s+(?:de\s+)?(20\d{2})/i);
+      if (!m) continue;
+      var monthNorm = String(m[1])
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '');
+      var month = MONTH_NORM_MAP[monthNorm];
+      if (month) {
+        _calYM = { year: m[2], month: month };
+        console.log('[Notion Automator] Mês/ano do calendário detectado:', _calYM.year + '-' + _calYM.month);
+        return _calYM;
+      }
+    }
+
+    return _calYM;
+  }
+
+  function inferNodeFullDate(node) {
+    var direct = nodeToDateKey(node);
+    if (direct) return direct;
+    var dayNum = nodeToDayOfMonthKey(node);
+    if (!dayNum) return null;
+    var ym = detectCalendarYearMonth();
+    if (!ym) return null;
+    return ym.year + '-' + ym.month + '-' + dayNum;
+  }
+
+  // ── WEEKDAY COLUMN DETECTION (para células sem data) ────────
+  const WEEKDAY_ABBREV_MAP = {
+    'DOMINGO': 'DOMINGO', 'DOM': 'DOMINGO', 'SUN': 'DOMINGO', 'SUNDAY': 'DOMINGO',
+    'SEGUNDA': 'SEGUNDA', 'SEGUNDAFEIRA': 'SEGUNDA', 'SEG': 'SEGUNDA', 'MON': 'SEGUNDA', 'MONDAY': 'SEGUNDA',
+    'TERCA': 'TERCA', 'TERCAFEIRA': 'TERCA', 'TER': 'TERCA', 'TUE': 'TERCA', 'TUESDAY': 'TERCA',
+    'QUARTA': 'QUARTA', 'QUARTAFEIRA': 'QUARTA', 'QUA': 'QUARTA', 'WED': 'QUARTA', 'WEDNESDAY': 'QUARTA',
+    'QUINTA': 'QUINTA', 'QUINTAFEIRA': 'QUINTA', 'QUI': 'QUINTA', 'THU': 'QUINTA', 'THURSDAY': 'QUINTA',
+    'SEXTA': 'SEXTA', 'SEXTAFEIRA': 'SEXTA', 'SEX': 'SEXTA', 'FRI': 'SEXTA', 'FRIDAY': 'SEXTA',
+    'SABADO': 'SABADO', 'SAB': 'SABADO', 'SAT': 'SABADO', 'SATURDAY': 'SABADO',
+  };
+
+  let _weekdayColsCache = null;
+  let _weekdayColsCacheTime = 0;
+
+  function getWeekdayColumns() {
+    const now = Date.now();
+    if (_weekdayColsCache && (now - _weekdayColsCacheTime) < 5000) return _weekdayColsCache;
+
+    const candidates = [];
+    const seen = new Set();
+
+    document.querySelectorAll('div, span, th, td').forEach(function(el) {
+      if (seen.has(el)) return;
+      if (el.children.length > 2) return;
+      const raw = normalizeWeekdayText((el.textContent || '').trim());
+      if (!raw || raw.length > 14) return;
+      const key = WEEKDAY_ABBREV_MAP[raw];
+      if (!key) return;
+      const rect = el.getBoundingClientRect();
+      if (!rect.width || rect.top < 0 || rect.top > window.innerHeight) return;
+      seen.add(el);
+      candidates.push({ weekdayKey: key, rect: rect, top: Math.round(rect.top) });
+    });
+
+    if (candidates.length < 7) { _weekdayColsCache = null; return null; }
+
+    // Agrupar por linha (top similar) e encontrar grupo com 7 dias únicos
+    candidates.sort(function(a, b) { return a.top - b.top || a.rect.left - b.rect.left; });
+
+    for (let i = 0; i <= candidates.length - 7; i++) {
+      const group = candidates.slice(i, i + 7);
+      const topDiff = group[group.length - 1].top - group[0].top;
+      if (topDiff > 24) continue;
+      const keys = new Set(group.map(function(g) { return g.weekdayKey; }));
+      if (keys.size >= 6) {
+        group.sort(function(a, b) { return a.rect.left - b.rect.left; });
+        _weekdayColsCache = group;
+        _weekdayColsCacheTime = now;
+        console.log('[Notion Automator] Colunas de dias da semana detectadas:', group.map(function(g) { return g.weekdayKey; }));
+        return group;
+      }
+    }
+
+    _weekdayColsCache = null;
+    return null;
+  }
+
+  function nodeToWeekdayKeyFromColumn(node) {
+    const columns = getWeekdayColumns();
+    if (!columns) return '';
+    const rect = node.getBoundingClientRect();
+    if (!rect.width) return '';
+    const cx = rect.left + rect.width / 2;
+    for (const col of columns) {
+      if (cx >= col.rect.left - 8 && cx <= col.rect.right + 8) return col.weekdayKey;
+    }
+    return '';
   }
 
   function normalizeWeekdayText(value) {
