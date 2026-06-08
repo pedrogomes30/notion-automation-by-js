@@ -5,7 +5,7 @@
   "description": "Automações customizáveis para o Notion via JavaScript",
   "permissions": ["storage", "scripting"],
   "host_permissions": [
-    "https://www.notion.so/*",
+    "https://app.notion.com/*",
     "https://api.notion.com/*"
   ],
   "action": {
@@ -20,12 +20,12 @@
   "web_accessible_resources": [
     {
       "resources": ["panel.html", "popup.js", "sandbox.html", "snipets/*.js"],
-      "matches": ["https://www.notion.so/*"]
+      "matches": ["https://app.notion.com/*"]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["https://www.notion.so/*"],
+      "matches": ["https://app.notion.com/*"],
       "js": ["content.js", "calendar-overlay.js"],
       "run_at": "document_idle"
     }
