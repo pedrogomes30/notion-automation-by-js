@@ -68,6 +68,10 @@ function generateId() { return Date.now().toString(36) + Math.random().toString(
 const SNIPPET_FILES = [
   { file: 'snipets/create-content-by-theme.js', name: 'Criar Conteúdo por Tema', desc: 'Gera conteúdos associando temas e formatos.' },
   { file: 'snipets/create-task-by-format-default-task.js', name: 'Criar Tarefa por Formato', desc: 'Cria tarefas padrão baseadas em formatos e tipos.' },
+  { file: 'snipets/delete-content-by-theme.js', name: 'Deletar Conteúdo por Tema', desc: 'Remove conteúdos órfãos baseados em temas.' },
+  { file: 'snipets/delete-task-by-content.js', name: 'Deletar Tarefa por Conteúdo', desc: 'Remove tarefas órfãs baseadas em conteúdos.' },
+  { file: 'snipets/update-task-by-content.js', name: 'Atualizar Tarefa por Conteúdo', desc: 'Atualiza tarefas baseadas em conteúdos.' },
+  { file: 'snipets/update-content-by-theme.js', name: 'Atualizar Conteúdo por Tema', desc: 'Atualiza conteúdos baseados em temas.' },
 ];
 
 async function loadInitialRules() {

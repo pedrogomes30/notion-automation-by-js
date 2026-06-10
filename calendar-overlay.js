@@ -63,14 +63,14 @@
       '  border: 1px solid rgba(255,255,255,0.38);',
       '  box-shadow: 0 3px 10px rgba(0,0,0,0.35);',
       '  pointer-events: none;',
-      '  z-index: 1;',
+      '  z-index: 990;',
       '}',
       '[data-na-cal-overlay-cell="1"] {',
       '  position: relative !important;',
       '}',
       '[data-na-cal-overlay-cell="1"] > * {',
       '  position: relative;',
-      '  z-index: 2;',
+      '  z-index: 991;',
       '}',
       '.' + TOOLTIP_CLASS + ' {',
       '  position: absolute;',
@@ -91,7 +91,7 @@
       '  visibility: hidden;',
       '  transition: opacity 0.12s ease;',
       '  pointer-events: none;',
-      '  z-index: 8;',
+      '  z-index: 992;',
       '}',
       '[data-na-cal-overlay-cell="1"]:hover .' + TOOLTIP_CLASS + ' {',
       '  opacity: 1;',
@@ -232,22 +232,38 @@
   }
 
   function findMonthHeadingRect() {
-    // Tenta encontrar o elemento que exibe o mês/ano no cabeçalho do calendário
-    var els = document.querySelectorAll(
-      '[role="heading"], [class*="calendarHeader"] *, [class*="calendar-header"] *, ' +
-      '[class*="CalendarHeader"] *, [class*="toolbar"] *, [class*="Toolbar"] *'
-    );
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el.children.length > 4) continue;
-      var text = (el.textContent || '').replace(/[◄►←→‹›<>]/g, '').trim();
-      var m = text.match(/([A-Za-z\u00C0-\u017F]+)\s+(?:de\s+)?(20\d{2})/i);
-      if (!m) continue;
-      var rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) return rect;
+  var els = document.querySelectorAll(
+    '[role="heading"], [class*="calendarHeader"] *, [class*="calendar-header"] *, ' +
+    '[class*="CalendarHeader"] *, [class*="toolbar"] *, [class*="Toolbar"] *, div'
+  );
+
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    
+    if (el.children.length > 0) continue; 
+    var text = (el.textContent || '').replace(/[◄►←→‹›<>]/g, '').trim();
+    var m = text.match(/^([A-Za-z\u00C0-\u017F]+)\s+(?:de\s+)?(20\d{2})$/i);
+    if (!m) continue;
+    
+    var rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      // Simplifica mandando o texto puro do mês direto daqui de dentro
+      var monthNorm = String(m[1])
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z]/g, '');
+
+      return {
+        rect: rect,
+        mes: m[1].toLowerCase(),
+        monthNorm: monthNorm, // Ex: "JUNHO"
+        ano: parseInt(m[2], 10)
+      };
     }
-    return null;
   }
+  return null;
+}
 
   function setLoadingIndicator(visible) {
     var el = document.getElementById('na-overlay-loading');
@@ -670,25 +686,14 @@
     _calYM = null;
     _calYMTime = now;
 
-    const els = document.querySelectorAll(
-      'button, [role="heading"], [class*="calendar"] *, [class*="header"] *, [class*="nav"] *'
-    );
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      if (el.children.length > 4) continue;
-      var text = (el.textContent || '').replace(/[◄►←→‹›<>]/g, '').trim();
-      // match "maio de 2026", "May 2026", "maio 2026" — preserva os dígitos do ano
-      var m = text.match(/([A-Za-z\u00C0-\u017F]+)\s+(?:de\s+)?(20\d{2})/i);
-      if (!m) continue;
-      var monthNorm = String(m[1])
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toUpperCase()
-        .replace(/[^A-Z]/g, '');
-      var month = MONTH_NORM_MAP[monthNorm];
+    // Em vez de usar o querySelector antigo e instável, usamos a detecção precisa
+    var headingInfo = findMonthHeadingRect();
+    
+    if (headingInfo) {
+      var month = MONTH_NORM_MAP[headingInfo.monthNorm];
       if (month) {
-        _calYM = { year: m[2], month: month };
-        console.log('[Notion Automator] Mês/ano do calendário detectado:', _calYM.year + '-' + _calYM.month);
+        _calYM = { year: String(headingInfo.ano), month: month };
+        console.log('[Notion Automator] Mês/ano do calendário detectado com precisão:', _calYM.year + '-' + _calYM.month);
         return _calYM;
       }
     }
