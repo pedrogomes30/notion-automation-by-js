@@ -1,9 +1,7 @@
 // ── Configuração ──────────────────────────────────────────────
-// Ajuste os nomes conforme aparecem no Notion
-// DBs
 const NOME_DB_TEMA      = 'tema';
 const NOME_DB_CONTEUDO  = 'conteudo';
-const NOME_DB_TAREFA    = 'tarefa'; // Adicionado para poder limpar as tarefas
+const NOME_DB_TAREFA    = 'tarefa'; 
 
 // conteudo atributos
 const PROP_TEMA_REL     = 'tema';      
@@ -11,15 +9,13 @@ const PROP_FORMAT_REL   = 'formato';
 const PROP_DATA_POSTAGEM= 'Data de postagem';
 const PROP_DATA_GRAVACAO= 'Data de gravação';
 
-// tarefa atributos
-const PROP_CONTEUDO_REL = 'conteudo';  // relação em Tarefa → Conteudo
-
 // tema atributos
 const PROP_FORMATOS     = 'formato';   
 const PROP_STATUS       = 'Status';       
 const PROP_CONTEUDOS    = 'conteudo'; 
 const PROP_PERIODO      = 'Período';    
-const STATUS_VALOR      = 'Em andamento'; 
+const STATUS_VALOR      = 'Recriar'; 
+const STATUS_FINAL_TEMA = 'Em andamento'; // Status do tema após o processamento completo
 
 // ── Localizar databases ───────────────────────────────────────
 const dbTema     = Object.values(databases).find(d => d.title === NOME_DB_TEMA);
@@ -33,98 +29,83 @@ if (!dbTarefa)   { log('Database "' + NOME_DB_TAREFA + '" nao encontrado.', 'err
 log('Databases encontrados:', 'success');
 log('  Tema:     ' + dbTema.id, 'info');
 log('  Conteudo: ' + dbConteudo.id, 'info');
-log('  Tarefa:   ' + dbTarefa.id, 'info');
 
 // ── Buscar schema do Conteudo para achar o campo titulo ───────
 const schemaConteudo   = await notion.fetchDatabaseSchema(dbConteudo.id);
 const campTituloConteudo = notion.getTitlePropertyName(schemaConteudo);
 
 // ── Buscar todos os Temas com o Status Alvo ───────────────────
-// REMOVIDO o filtro 'is_empty: true' para podermos pegar temas que já têm conteúdo e resetá-los
 const filtro = {
   property: PROP_STATUS,
   status: { equals: STATUS_VALOR },
 };
 
-log('Buscando temas "' + STATUS_VALOR + '" para resetar...', 'info');
+log('Buscando temas "' + STATUS_VALOR + '" para processar e atualizar...', 'info');
 const temas = await notion.queryAllPages(dbTema.id, filtro);
 log(temas.length + ' tema(s) encontrado(s).', 'info');
 
-let criados  = 0;
-let pulados  = 0;
-let deletadosConteudo = 0;
-let deletadosTarefa   = 0;
+let renomeados = 0;
+let criados    = 0;
+let pulados    = 0;
+let temasFinalizados = 0;
+
+const cacheFormatos = new Map();
 
 // ── Processar cada Tema ───────────────────────────────────────
 for (const tema of temas) {
-  const tituloTema   = notion.getPageTitle(tema);
-  const relFormatos  = tema.properties[PROP_FORMATOS]?.relation ?? [];
-  const conteudosAtuais = tema.properties[PROP_CONTEUDOS]?.relation ?? [];
+  const tituloTema       = notion.getPageTitle(tema);
+  const relFormatos      = tema.properties[PROP_FORMATOS]?.relation ?? [];
+  const conteudosAtuais  = tema.properties[PROP_CONTEUDOS]?.relation ?? [];
 
   log('---------------------------------------------------------', 'info');
   log('Processando Tema: "' + tituloTema + '"', 'info');
 
-  // ── PASSO 1: Limpar Conteúdos e Tarefas Antigas (Cascata) ────
-  if (conteudosAtuais.length > 0) {
-    log('  Removendo ' + conteudosAtuais.length + ' conteúdo(s) antigo(s) e suas tarefas...', 'warn');
-    
-    for (const contRef of conteudosAtuais) {
-      // 1. Buscar as tarefas atreladas a este conteúdo específico para deletá-las
-      const filtroTarefas = {
-        property: PROP_CONTEUDO_REL,
-        relation: { contains: contRef.id }
-      };
-      const tarefasDoConteudo = await notion.queryAllPages(dbTarefa.id, filtroTarefas);
-      
-      for (const tarefa of tarefasDoConteudo) {
-        await notion.updatePage(tarefa.id, { archived: true });
-        deletadosTarefa++;
-      }
-
-      // 2. Arquivar o conteúdo antigo
-      await notion.updatePage(contRef.id, { archived: true });
-      deletadosConteudo++;
-      await notion.sleep(150);
-    }
-
-    // 3. Limpar temporariamente a relação de conteúdos no Tema para evitar duplicidade visual
-    await notion.updatePage(tema.id, {
-      [PROP_CONTEUDOS]: { relation: [] },
-    });
-    await notion.sleep(300);
-  }
-
-  // Verificar se existem formatos para criar os novos conteúdos
   if (relFormatos.length === 0) {
-    log('  [pulado] "' + tituloTema + '" não tem formatos vinculados para recriação.', 'warn');
+    log('  [pulado] "' + tituloTema + '" não tem formatos vinculados.', 'warn');
     pulados++;
     continue;
   }
 
-  // ── PASSO 2: Criar Novamente os Conteúdos (Sem tarefas) ──────
-  log('  Recriando conteúdos para ' + relFormatos.length + ' formato(s)...', 'info');
-  const idsConteudosCriados = [];
+  // Mapeia os conteúdos existentes para evitar duplicados (formatoId -> conteudoId)
+  const mapaConteudosExistentes = new Map();
+  
+  if (conteudosAtuais.length > 0) {
+    log('  Mapeando ' + conteudosAtuais.length + ' conteúdo(s) existente(s) para atualização...', 'info');
+    for (const cRef of conteudosAtuais) {
+      try {
+        const dadosConteudo = await notion.fetch('/pages/' + cRef.id);
+        const formatoRel = dadosConteudo.properties[PROP_FORMAT_REL]?.relation ?? [];
+        if (formatoRel.length > 0) {
+          mapaConteudosExistentes.set(formatoRel[0].id, cRef.id);
+        }
+      } catch (e) {
+        log('  Não foi possível ler dados do conteúdo antigo ' + cRef.id, 'warn');
+      }
+    }
+  }
 
-  for (const ref of relFormatos) {
-    const paginaFormato = await notion.fetch('/pages/' + ref.id);
-    const tituloFormato = notion.getPageTitle(paginaFormato);
-    const tituloConteudo = tituloTema + ' — ' + tituloFormato;
+  const formatosUnicos = Array.from(new Set(relFormatos.map(f => f.id)));
+  const listaFinalConteudos = [];
 
-    // Montar propriedades da nova página de Conteúdo
+  // ── Varre os formatos para Atualizar ou Criar Conteúdos ───────
+  for (const formatoId of formatosUnicos) {
+    if (!cacheFormatos.has(formatoId)) {
+      const paginaFormato = await notion.fetch('/pages/' + formatoId);
+      cacheFormatos.set(formatoId, paginaFormato);
+      await notion.sleep(100);
+    }
+    const formato = cacheFormatos.get(formatoId);
+    const tituloFormato = notion.getPageTitle(formato);
+    const tituloConteudoCorreto = tituloTema + ' — ' + tituloFormato;
+
+    // Montar propriedades base comuns (Título e Datas)
     const props = {
       [campTituloConteudo]: {
-        title: [{ type: 'text', text: { content: tituloConteudo } }],
+        title: [{ type: 'text', text: { content: tituloConteudoCorreto } }],
       },
     };
 
-    if (schemaConteudo.properties[PROP_TEMA_REL]?.type === 'relation') {
-      props[PROP_TEMA_REL] = { relation: [{ id: tema.id }] };
-    }
-
-    if (schemaConteudo.properties[PROP_FORMAT_REL]?.type === 'relation') {
-      props[PROP_FORMAT_REL] = { relation: [{ id: ref.id }] };
-    }
-
+    // Alinhamento das datas baseado no Período do Tema
     if (schemaConteudo.properties[PROP_DATA_POSTAGEM]?.type === 'date') {
       props[PROP_DATA_POSTAGEM] = { date: tema.properties[PROP_PERIODO]?.date };
     }
@@ -139,26 +120,54 @@ for (const tema of temas) {
       }
     }
 
-    const paginaCriada = await notion.createPage(dbConteudo.id, props);
-    idsConteudosCriados.push({ id: paginaCriada.id });
-    log('    Criado: "' + tituloConteudo + '"', 'success');
-    criados++;
+    // Se o conteúdo já existir para este formato, APENAS ATUALIZAMOS (Mantém histórico e tarefas vinculadas!)
+    if (mapaConteudosExistentes.has(formatoId)) {
+      const idConteudoExistente = mapaConteudosExistentes.get(formatoId);
+      await notion.updatePage(idConteudoExistente, props);
+      log('    Atualizado: "' + tituloConteudoCorreto + '"', 'success');
+      listaFinalConteudos.push({ id: idConteudoExistente });
+      renomeados++;
+    } else {
+      // Se for um formato novo adicionado ao Tema depois, cria o conteúdo do zero
+      if (schemaConteudo.properties[PROP_TEMA_REL]?.type === 'relation') {
+        props[PROP_TEMA_REL] = { relation: [{ id: tema.id }] };
+      }
+      if (schemaConteudo.properties[PROP_FORMAT_REL]?.type === 'relation') {
+        props[PROP_FORMAT_REL] = { relation: [{ id: formatoId }] };
+      }
 
-    await notion.sleep(300); // rate limit
+      const novoConteudo = await notion.createPage(dbConteudo.id, props);
+      log('    Criado novo por falta de vínculo: "' + tituloConteudoCorreto + '"', 'success');
+      listaFinalConteudos.push({ id: novoConteudo.id });
+      criados++;
+    }
+    await notion.sleep(150);
   }
 
-  // ── PASSO 3: Atualizar o Tema com as Novas Relações ──────────
-  await notion.updatePage(tema.id, {
-    [PROP_CONTEUDOS]: { relation: idsConteudosCriados },
-  });
-  log('  Relação atualizada no tema "' + tituloTema + '" com os novos conteúdos.', 'success');
+  // ── PASSO EXTRA: Atualizar as relações e mudar o Status do Tema ──
+  const propsAtualizacaoTema = {};
+  
+  if (listaFinalConteudos.length > 0) {
+    propsAtualizacaoTema[PROP_CONTEUDOS] = { relation: listaFinalConteudos };
+  }
+  
+  // Atualiza o status do tema para o valor final configurado
+  propsAtualizacaoTema[PROP_STATUS] = { status: { name: STATUS_FINAL_TEMA } };
 
-  await notion.sleep(300);
+  try {
+    log('  Atualizando relações e mudando status do Tema para "' + STATUS_FINAL_TEMA + '"...', 'info');
+    await notion.updatePage(tema.id, propsAtualizacaoTema);
+    temasFinalizados++;
+  } catch (err) {
+    log('  Erro ao atualizar o Tema: ' + err.message, 'error');
+  }
+
+  await notion.sleep(200);
 }
 
 // ── Resumo Final ──────────────────────────────────────────────
-log('\n=== RESUMO DO RESET ===', 'info');
-log('Conteúdos antigos limpos: ' + deletadosConteudo, 'success');
-log('Tarefas antigas limpas:   ' + deletadosTarefa, 'success');
-log('Novos conteúdos criados:  ' + criados, 'success');
-log('Temas pulados:            ' + pulados, 'warn');
+log('\n=== RESUMO DA ATUALIZAÇÃO DE TEMAS ===', 'info');
+log('Conteúdos existentes atualizados: ' + renomeados, 'success');
+log('Novos conteúdos criados:          ' + criados, 'success');
+log('Temas movidos para ' + STATUS_FINAL_TEMA + ':  ' + temasFinalizados, 'success');
+log('Temas pulados:                    ' + pulados, 'warn');

@@ -1,50 +1,103 @@
-// ── CONFIGURAÇÃO DE LIMPEZA ───────────────────────────────────
-// (Mantendo as mesmas constantes do seu script original)
+// ── CONFIGURAÇÃO DE LIMPEZA EM CASCATA ────────────────────────
 const NOME_DB_CONTEUDO  = 'conteudo';
-const PROP_TEMA_REL     = 'tema'; // Nome da relação em Conteudo → Tema
+const NOME_DB_TAREFA    = 'tarefa';
 
-// ── Localizar database de Conteúdo ────────────────────────────
+const PROP_TEMA_REL     = 'tema';     // Relação em Conteudo → Tema
+const PROP_CONTEUDO_REL = 'conteudo'; // Relação em Tarefa → Conteudo
+
+// ── Localizar databases ───────────────────────────────────────
 const dbConteudo = Object.values(databases).find(d => d.title === NOME_DB_CONTEUDO);
+const dbTarefa   = Object.values(databases).find(d => d.title === NOME_DB_TAREFA);
 
-if (!dbConteudo) { 
-  log('Database "' + NOME_DB_CONTEUDO + '" nao encontrado para a limpeza.', 'error'); 
-  return; 
-}
+if (!dbConteudo) { log('Database "' + NOME_DB_CONTEUDO + '" nao encontrado.', 'error'); return; }
+if (!dbTarefa)   { log('Database "' + NOME_DB_TAREFA + '" nao encontrado.', 'error'); return; }
 
-log('Iniciando verificação de conteúdos órfãos...', 'info');
+log('Iniciando varredura em cascata para conteúdos e tarefas órfãs...', 'info');
 
-// ── Buscar Conteúdos Órfãos ───────────────────────────────────
-// Filtra apenas os conteúdos onde a relação com o Tema está vazia
-const filtroOrfaos = {
+// ── Buscar Conteúdos Órfãos (Sem Tema) ────────────────────────
+const filtroConteudosOrfaos = {
   property: PROP_TEMA_REL,
-  relation: {
-    is_empty: true
-  }
+  relation: { is_empty: true }
 };
 
-const conteudosOrfaos = await notion.queryAllPages(dbConteudo.id, filtroOrfaos);
-log(conteudosOrfaos.length + ' conteúdo(s) órfão(s) encontrado(s).', 'info');
+const conteudosOrfaos = await notion.queryAllPages(dbConteudo.id, filtroConteudosOrfaos);
+log(conteudosOrfaos.length + ' conteúdo(s) órfão(s) detectado(s).', 'info');
 
-let deletados = 0;
+let totalConteudosDeletados = 0;
+let totalTarefasDeletadas = 0;
 
-// ── Deletar/Arquivar os Conteúdos Órfãos ──────────────────────
+// ── Processar Deleção em Cascata ──────────────────────────────
 for (const conteudo of conteudosOrfaos) {
   const tituloConteudo = notion.getPageTitle(conteudo);
   
-  log('Deletando conteúdo órfão: "' + tituloConteudo + '"...', 'info');
+  log('---------------------------------------------------------', 'info');
+  log('Processando órfão: "' + tituloConteudo + '"', 'info');
+
+  // 1. Buscar todas as tarefas vinculadas a ESTE conteúdo específico antes de deletá-lo
+  const filtroTarefasFilhas = {
+    property: PROP_CONTEUDO_REL,
+    relation: { contains: conteudo.id }
+  };
   
-  // No Notion API, deletar significa atualizar a propriedade 'archived' para true
-  await notion.updatePage(conteudo.id, {
-    archived: true
-  });
+  const tarefasFilhas = await notion.queryAllPages(dbTarefa.id, filtroTarefasFilhas);
   
-  deletados++;
-  await notion.sleep(300); // Respeitar o rate limit da API
+  if (tarefasFilhas.length > 0) {
+    log('  Encontrada(s) ' + tarefasFilhas.length + ' tarefa(s) dependente(s). Removendo...', 'warn');
+    
+    for (const tarefa of tarefasFilhas) {
+      const tituloTarefa = notion.getPageTitle(tarefa);
+      try {
+        // Envia a tarefa para a lixeira via assinatura nativa da extensão
+        await notion.fetch('/pages/' + tarefa.id, 'PATCH', { archived: true });
+        totalTarefasDeletadas++;
+      } catch (err) {
+        log('    [Falha] Não foi possível deletar tarefa "' + tituloTarefa + '": ' + err.message, 'error');
+      }
+      await notion.sleep(100);
+    }
+  }
+
+  // 2. Agora que os filhos foram limpos, deleta o Conteúdo pai
+  try {
+    log('  Enviando conteúdo "' + tituloConteudo + '" para a lixeira...', 'info');
+    await notion.fetch('/pages/' + conteudo.id, 'PATCH', { archived: true });
+    totalConteudosDeletados++;
+  } catch (err) {
+    log('  [Falha] Não foi possível deletar conteúdo: ' + err.message, 'error');
+  }
+
+  await notion.sleep(200); // Respeitar o rate limit global do Notion
 }
 
-// ── Resumo da Limpeza ─────────────────────────────────────────
-if (deletados > 0) {
-  log('Limpeza concluída com sucesso! Total de conteúdos deletados: ' + deletados, 'success');
-} else {
-  log('Nenhum conteúdo órfão precisou ser deletado.', 'success');
+// ── Varredura de Segurança: Tarefas Órfãs Soltas ──────────────
+// Caso alguma tarefa tenha ficado órfã por outro motivo no Notion
+log('---------------------------------------------------------', 'info');
+log('Executando varredura de segurança para tarefas órfãs remanescentes...', 'info');
+
+const filtroTarefasOrfaosGerais = {
+  property: PROP_CONTEUDO_REL,
+  relation: { is_empty: true }
+};
+
+const tarefasOrfaosSoltas = await notion.queryAllPages(dbTarefa.id, filtroTarefasOrfaosGerais);
+
+if (tarefasOrfaosSoltas.length > 0) {
+  log('  Detectadas ' + tarefasOrfaosSoltas.length + ' tarefa(s) órfã(s) soltas. Limpando...', 'warn');
+  for (const tarefa of tarefasOrfaosSoltas) {
+    try {
+      await notion.fetch('/pages/' + tarefa.id, 'PATCH', { archived: true });
+      totalTarefasDeletadas++;
+    } catch (err) {
+      // Ignora falhas silenciosas no log geral
+    }
+    await notion.sleep(100);
+  }
+}
+
+// ── Resumo Final da Limpeza ───────────────────────────────────
+log('\n=== RESUMO DA LIMPEZA EM CASCATA ===', 'info');
+log('Total de Conteúdos limpos: ' + totalConteudosDeletados, 'success');
+log('Total de Tarefas limpas:   ' + totalTarefasDeletadas, 'success');
+if (totalConteudosDeletados === 0 && totalTarefasDeletadas === 0) {
+  log('Seu workspace já estava 100% limpo.', 'success');
 }

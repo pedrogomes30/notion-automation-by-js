@@ -6,6 +6,7 @@ const NOME_DB_TAREFA_TIPO = 'tarefa_tipo';
 
 const PROP_STATUS         = 'Status';          // status do conteudo
 const STATUS_VALOR        = 'Recriar';         // Status que engatilha a atualização
+const STATUS_PROCESSO     = 'Em andamento';    // Status final do conteúdo pós-processamento
 
 const PROP_FORMATO        = 'formato';         // relacao em conteudo -> formato
 const PROP_TAREFA         = 'tarefa';          // relacao em conteudo -> tarefa
@@ -46,6 +47,7 @@ log(conteudos.length + ' conteudo(s) encontrado(s).', 'info');
 let renomeadas = 0;
 let criadas = 0;
 let pulados = 0;
+let atualizadosStatus = 0;
 
 const cacheFormatos = new Map();
 
@@ -58,7 +60,7 @@ for (const conteudo of conteudos) {
   log('Processando Conteúdo: "' + tituloConteudo + '"', 'info');
 
   if (relFormatosRaw.length === 0) {
-    log('  [pulado] "' + tituloConteudo + '" sem formato vinculado.', 'warn');
+    log('   [pulado] "' + tituloConteudo + '" sem formato vinculado.', 'warn');
     pulados++;
     continue;
   }
@@ -67,7 +69,7 @@ for (const conteudo of conteudos) {
   const mapaTarefasExistentes = new Map(); // tarefaTipoId -> tarefaId
   
   if (tarefasAtuais.length > 0) {
-    log('  Mapeando ' + tarefasAtuais.length + ' tarefa(s) existente(s) para renomear...', 'info');
+    log('   Mapeando ' + tarefasAtuais.length + ' tarefa(s) existente(s) para renomear...', 'info');
     for (const tRef of tarefasAtuais) {
       try {
         const dadosTarefa = await notion.fetch('/pages/' + tRef.id);
@@ -76,7 +78,7 @@ for (const conteudo of conteudos) {
           mapaTarefasExistentes.set(tipoRel[0].id, tRef.id);
         }
       } catch (e) {
-        log('  Não foi possível ler dados da tarefa ' + tRef.id, 'warn');
+        log('   Não foi possível ler dados da tarefa ' + tRef.id, 'warn');
       }
     }
   }
@@ -99,7 +101,7 @@ for (const conteudo of conteudos) {
     for (const tarefaTipoId of tarefaTiposUnicos) {
       const tarefaTipo   = await notion.fetch('/pages/' + tarefaTipoId);
       const nomeTipo     = notion.getPageTitle(tarefaTipo);
-      const tituloTarefaCorreto = nomeTipo + ' — ' + tituloConteudo; // O nome atualizado com o nome do conteúdo novo
+      const tituloTarefaCorreto = nomeTipo + ' — ' + tituloConteudo; // O nome updated com o nome do conteúdo novo
 
       // Monta as propriedades básicas de atualização/criação
       const props = {
@@ -158,16 +160,32 @@ for (const conteudo of conteudos) {
     }
   }
 
-  // Atualiza a relação do Conteúdo garantindo que todas as IDs (antigas renomeadas + novas) fiquem salvas ali
+  // Objeto contendo os dados a serem atualizados na página do Conteúdo ativo
+  const propriedadesAtualizacaoConteudo = {};
+
+  // 1. Se houver tarefas, prepara para injetar a relação atualizada
   if (listaFinalTarefas.length > 0) {
-    await notion.updatePage(conteudo.id, {
-      [PROP_TAREFA]: { relation: listaFinalTarefas },
-    });
+    propriedadesAtualizacaoConteudo[PROP_TAREFA] = { relation: listaFinalTarefas };
   }
+
+  // 2. CORREÇÃO SOLICITADA: Adiciona a alteração de status do conteúdo para "Em desenvolvimento"
+  propriedadesAtualizacaoConteudo[PROP_STATUS] = { status: { name: STATUS_PROCESSO } };
+
+  // Executa o update único no conteúdo (relação + mudança de status)
+  try {
+    log('   Atualizando status do Conteúdo para "' + STATUS_PROCESSO + '"...', 'info');
+    await notion.updatePage(conteudo.id, propriedadesAtualizacaoConteudo);
+    atualizadosStatus++;
+  } catch (err) {
+    log('   Erro ao atualizar status do conteúdo ' + tituloConteudo + ': ' + err.message, 'error');
+  }
+
+  await notion.sleep(100);
 }
 
 // ── Resumo Final ──────────────────────────────────────────────
 log('\n=== RESUMO DA ATUALIZAÇÃO ===', 'info');
 log('Tarefas antigas renomeadas:  ' + renomeadas, 'success');
 log('Novas tarefas geradas:       ' + criadas, 'success');
+log('Conteúdos movidos para Em desenvolvimento: ' + atualizadosStatus, 'success');
 log('Conteúdos pulados:           ' + pulados, 'warn');
